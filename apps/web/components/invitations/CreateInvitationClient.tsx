@@ -122,7 +122,7 @@ export function CreateInvitationClient({ eventId }: { eventId: string }) {
     <main className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14 lg:py-16">
       <Link
         href={backHref}
-        className="rounded-lg text-label-md text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7A263A]"
+        className="rounded-lg text-label-md text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         ← Back to Invitation
       </Link>
@@ -131,14 +131,14 @@ export function CreateInvitationClient({ eventId }: { eventId: string }) {
         Create an invitation
       </h1>
       <p className="mt-3 text-body-lg text-muted">
-        Create the invitation record and generate its first design from your saved prompt.
+        Choose your invitation link. Your saved prompt will guide the first design.
       </p>
       {savedPrompt && (
         <div
           role="status"
-          className="mt-6 flex items-start gap-3 rounded-xl border border-[#7A263A]/20 bg-[#F7EFEC] px-4 py-3 text-body-sm text-ink"
+          className="mt-6 flex items-start gap-3 rounded-xl border border-primary/20 bg-secondary px-4 py-3 text-body-sm text-ink"
         >
-          <span className="material-symbols-outlined text-lg text-[#7A263A]" aria-hidden="true">
+          <span className="material-symbols-outlined text-lg text-primary" aria-hidden="true">
             auto_awesome
           </span>
           <span className="min-w-0">

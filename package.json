@@ -10,6 +10,7 @@
     "packages/config"
   ],
   "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
     "dev:web": "npm run dev --workspace=apps/web",
     "dev:api": "npm run start:dev --workspace=apps/api",
     "dev:ai": "uvicorn app.main:app --reload --port 8000 --app-dir apps/ai-service",
@@ -23,7 +24,8 @@
     "test:ai": "pytest apps/ai-service/tests -v",
     "prisma:generate": "prisma generate --schema=./prisma/schema.prisma",
     "prisma:studio": "prisma studio --schema=./prisma/schema.prisma",
-    "prisma:validate": "prisma validate --schema=./prisma/schema.prisma"
+    "prisma:validate": "prisma validate --schema=./prisma/schema.prisma",
+    "db:seed": "prisma db seed"
   },
   "devDependencies": {
     "prettier": "^3.3.3",
@@ -33,6 +35,9 @@
   "engines": {
     "node": ">=20 <23",
     "npm": ">=10"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0"

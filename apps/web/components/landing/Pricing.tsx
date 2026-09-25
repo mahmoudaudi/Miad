@@ -1,114 +1,91 @@
-import { GRADIENT_BUTTON, CONTAINER } from './theme';
+import Link from 'next/link';
+import React from 'react';
+import { getDictionary } from '@/lib/i18n/dictionaries';
+import { trackingFor, type Locale } from '@/lib/i18n/locales';
+import { BTN_PRIMARY, BTN_SECONDARY, CONTAINER } from './theme';
+import { Reveal } from './Reveal';
 
-type Tier = {
-  name: string;
-  price: string;
-  blurb: string;
-  features: string[];
-  cta: string;
-  featured: boolean;
-};
-
-const TIERS: Tier[] = [
-  {
-    name: 'Starter',
-    price: '$0',
-    blurb: 'Perfect for single events and birthdays.',
-    features: ['3 AI Invitations per month', 'Up to 50 guests per event', 'Basic RSVP tracking'],
-    cta: 'Get Started Free',
-    featured: false,
-  },
-  {
-    name: 'Professional',
-    price: '$29',
-    blurb: 'For active hosts, planners, and community builders.',
-    features: [
-      'Unlimited AI Invitations',
-      'Up to 500 guests per event',
-      'Advanced analytics & custom domains',
-      'Zero branding watermark',
-    ],
-    cta: 'Start Pro Trial',
-    featured: true,
-  },
-  {
-    name: 'Enterprise',
-    price: '$99',
-    blurb: 'For tech companies, agencies, and large summits.',
-    features: [
-      'Everything in Professional',
-      'Unlimited guests & team seats',
-      'Dedicated account manager',
-      'Custom API integrations',
-    ],
-    cta: 'Contact Sales',
-    featured: false,
-  },
-];
-
-/** Pricing tiers (static showcase — checkout comes in a later phase). */
-export function Pricing() {
+/** Pricing preview — every plan starts with a real account (checkout comes later). */
+export function Pricing({ locale }: { locale: Locale }) {
+  const t = getDictionary(locale).pricing;
   return (
-    <section className="py-24 bg-surface">
+    <section id="pricing" className="scroll-mt-16 bg-surface py-16 md:py-24">
       <div className={CONTAINER}>
-        <div className="text-center max-w-2xl mx-auto mb-16">
-          <span className="text-label-sm text-primary uppercase tracking-wider block mb-2">
-            Transparent Pricing
+        <Reveal className="mx-auto mb-12 max-w-2xl text-center md:mb-16">
+          <span
+            className={`mb-3 block text-label-sm uppercase text-accent ${trackingFor(locale, 'tracking-wider')}`}
+          >
+            {t.eyebrow}
           </span>
-          <h2 className="text-headline-lg-mobile md:text-headline-lg font-headline-lg text-on-surface mb-4">
-            Plans for every scale
+          <h2 className="mb-4 font-display text-headline-lg-mobile text-ink md:text-headline-lg">
+            {t.title}
           </h2>
-          <p className="text-body-lg text-on-surface-variant">
-            Whether you&apos;re hosting an intimate dinner or a global tech summit.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
-          {TIERS.map((tier) => (
+          <p className="text-body-lg text-muted">{t.subtitle}</p>
+        </Reveal>
+        <div className="grid grid-cols-1 items-stretch gap-6 md:grid-cols-3">
+          {t.tiers.map((tier) => (
             <div
               key={tier.name}
               className={
                 tier.featured
-                  ? 'bg-surface-container-lowest p-8 rounded-2xl border-2 border-primary relative flex flex-col justify-between shadow-xl'
-                  : 'bg-surface-container-lowest p-8 rounded-2xl border border-outline-variant/30 flex flex-col justify-between'
+                  ? 'relative flex flex-col justify-between rounded-2xl bg-ink p-6 text-white shadow-lift sm:p-8'
+                  : 'flex flex-col justify-between rounded-2xl border border-line bg-background p-6 sm:p-8'
               }
             >
               {tier.featured && (
-                <div
-                  className={`absolute -top-3.5 left-1/2 -translate-x-1/2 ${GRADIENT_BUTTON} px-3 py-1 rounded-full text-label-sm font-bold`}
-                >
-                  Most Popular
+                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-accent px-3 py-1 text-label-sm font-semibold text-white">
+                  {t.popular}
                 </div>
               )}
               <div>
                 <div
-                  className={`text-label-sm uppercase tracking-wider mb-2 ${tier.featured ? 'text-primary' : 'text-on-surface-variant'}`}
+                  className={`mb-2 text-label-sm uppercase tracking-wider ${tier.featured ? 'text-white/70' : 'text-muted'}`}
                 >
                   {tier.name}
                 </div>
-                <div className="text-headline-lg font-headline-lg text-on-surface mb-4">
+                <div
+                  className={`mb-4 font-display text-4xl ${tier.featured ? 'text-white' : 'text-ink'}`}
+                >
                   {tier.price}{' '}
-                  <span className="text-body-md text-on-surface-variant font-normal">/ month</span>
+                  <span
+                    className={`font-body-md text-body-md ${tier.featured ? 'text-white/70' : 'text-muted'}`}
+                  >
+                    {t.perMonth}
+                  </span>
                 </div>
-                <p className="text-body-md text-on-surface-variant mb-8">{tier.blurb}</p>
-                <ul className="space-y-4 text-body-md text-on-surface mb-8">
+                <p
+                  className={`mb-8 text-body-md ${tier.featured ? 'text-white/70' : 'text-muted'}`}
+                >
+                  {tier.blurb}
+                </p>
+                <ul
+                  className={`mb-8 space-y-4 text-body-md ${tier.featured ? 'text-white' : 'text-ink'}`}
+                >
                   {tier.features.map((feature) => (
                     <li key={feature} className="flex items-center gap-3">
-                      <span className="material-symbols-outlined text-primary text-sm">check</span>
+                      <span
+                        className="material-symbols-outlined text-sm text-accent"
+                        aria-hidden="true"
+                      >
+                        check
+                      </span>
                       {feature}
                     </li>
                   ))}
                 </ul>
               </div>
-              <button
-                type="button"
-                className={
+              <Link
+                href="/register"
+                className={`block w-full rounded-xl py-3 text-center font-title text-label-md ${
                   tier.featured
-                    ? `w-full py-3 rounded-xl ${GRADIENT_BUTTON} font-title text-label-md hover:opacity-95 transition-all`
-                    : 'w-full py-3 rounded-xl border border-outline-variant text-on-surface font-title text-label-md hover:bg-surface-container transition-all'
-                }
+                    ? 'bg-surface text-ink transition-all hover:bg-white/90'
+                    : tier.ctaStyle === 'secondary'
+                      ? BTN_SECONDARY
+                      : BTN_PRIMARY
+                } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
               >
                 {tier.cta}
-              </button>
+              </Link>
             </div>
           ))}
         </div>

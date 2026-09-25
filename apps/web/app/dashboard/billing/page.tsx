@@ -1,0 +1,14 @@
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { ApiError } from '@/lib/api-client';
+import { getBillingPlans, getCurrentSubscription, type BillingPlan, type SubscriptionRecord } from '@/lib/billing';
+
+export default function BillingPage() {
+  const [plans, setPlans] = useState<BillingPlan[]>([]);
+  const [subscription, setSubscription] = useState<SubscriptionRecord>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void Promise.all([getBillingPlans(), getCurrentSubscription()]).then(([nextPlans, nextSubscription]) => { setPlans(nextPlans); setSubscription(nextSubscription); }).catch((caught) => setError(caught instanceof ApiError ? caught.message : 'We could not load billing information.')); }, []);
+  return <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12"><Link href="/dashboard/invitations/new" className="text-label-md text-muted hover:text-ink">← AI Studio</Link><header className="mt-8"><p className="text-label-sm uppercase tracking-[0.16em] text-accent">Billing</p><h1 className="mt-3 font-display text-headline-lg-mobile text-ink sm:text-headline-lg">Plans and subscription</h1><p className="mt-3 text-body-lg text-muted">Your plan data is ready for checkout integration. Payment actions remain disabled until a provider is configured.</p></header>{error && <p role="alert" className="mt-6 text-body-sm text-error">{error}</p>}{subscription && <section className="mt-8 rounded-2xl border border-line bg-surface p-6 shadow-subtle"><p className="text-label-sm uppercase tracking-wider text-muted">Current plan</p><h2 className="mt-2 font-display text-headline-md text-ink">{subscription.plan.name}</h2><p className="mt-2 text-body-md text-muted">{subscription.status} · {subscription.autoRenew ? 'Auto-renewing' : 'Manual renewal'}</p></section>}<div className="mt-8 grid gap-5 md:grid-cols-3">{plans.map((plan) => <article key={plan.id} className="rounded-2xl border border-line bg-surface p-6 shadow-subtle"><h2 className="font-display text-headline-md text-ink">{plan.name}</h2><p className="mt-2 text-3xl font-semibold text-ink">{String(plan.price)} <span className="text-body-sm font-normal text-muted">/ {plan.billingInterval}</span></p><p className="mt-3 text-body-sm text-muted">{plan.description}</p><ul className="mt-5 space-y-2 text-body-sm text-ink">{plan.planFeatures.map((item) => <li key={item.feature.name}>{item.enabled ? 'Included' : 'Not included'} · {item.feature.name}{item.limitValue !== null ? ` (${item.limitValue})` : ''}</li>)}</ul><button type="button" disabled className="mt-6 w-full rounded-xl border border-line px-4 py-3 text-label-md text-muted">Checkout unavailable</button></article>)}</div>{plans.length === 0 && !error && <p className="mt-8 rounded-2xl border border-line bg-surface p-10 text-center text-body-md text-muted">No plans are configured yet.</p>}</main>;
+}

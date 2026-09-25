@@ -4,5 +4,7 @@
   "testRegex": ".e2e-spec.ts$",
   "setupFiles": ["<rootDir>/test/setup-e2e.ts"],
   "transform": { "^.+\\.(t|j)s$": "ts-jest" },
-  "testEnvironment": "node"
+  "testEnvironment": "node",
+  // Generous: shared-region Supabase pooler adds seconds per query.
+  "testTimeout": 180000
 }

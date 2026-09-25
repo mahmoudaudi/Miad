@@ -1,9 +1,8 @@
-/** Minimal reusable card — layout foundation only, no design system yet. */
+import React from 'react';
+
 export function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="w-full rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h1 className="text-lg font-semibold">{title}</h1>
-      <div className="mt-2">{children}</div>
-    </section>
-  );
+  return <section className="w-full rounded-2xl border border-line bg-surface p-5 sm:p-7">
+    <h2 className="font-display text-headline-sm text-ink">{title}</h2>
+    <div className="mt-3">{children}</div>
+  </section>;
 }

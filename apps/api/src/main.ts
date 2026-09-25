@@ -1,11 +1,13 @@
 import 'reflect-metadata';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { cors: false });
+  app.use(cookieParser());
 
   // --- Global prefix + versioning: /api/v1/... ---
   const globalPrefix = process.env.API_PREFIX ?? 'api';

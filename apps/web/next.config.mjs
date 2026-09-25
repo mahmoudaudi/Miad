@@ -3,9 +3,23 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   images: {
-    // Demo hotlinks from the approved design. Later phases serve uploads
-    // from our own media pipeline (see media_assets table) and this can shrink.
-    remotePatterns: [{ protocol: 'https', hostname: 'lh3.googleusercontent.com' }],
+    // All optimized sources are immutable local files, so the optimizer
+    // output can live long in caches (default is 60s must-revalidate).
+    minimumCacheTTL: 31536000,
+  },
+  async headers() {
+    return [
+      {
+        // Landing imagery filenames are content-stable and fully owned —
+        // safe for long-lived immutable caching (previously max-age=0).
+        source: '/landing/:path*',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
+      },
+      {
+        source: '/fonts/:path*',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
+      },
+    ];
   },
 };
 

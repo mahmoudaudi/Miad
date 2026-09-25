@@ -1,29 +1,20 @@
 import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module';
+import { MediaModule } from '../media/media.module';
 import { INVITATION_AI_PROVIDER } from './ai-provider.types';
-import { GroqInvitationAiProvider } from './groq-invitation-ai.provider';
 import { InvitationDesignsController } from './invitation-designs.controller';
 import { InvitationDesignsService } from './invitation-designs.service';
 import { OpenAIInvitationAiProvider } from './openai-invitation-ai.provider';
 import { PublicInvitationsController } from './public-invitations.controller';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, MediaModule],
   controllers: [InvitationDesignsController, PublicInvitationsController],
   providers: [
     InvitationDesignsService,
     OpenAIInvitationAiProvider,
-    GroqInvitationAiProvider,
-    {
-      provide: INVITATION_AI_PROVIDER,
-      useFactory: (
-        config: ConfigService,
-        openai: OpenAIInvitationAiProvider,
-        groq: GroqInvitationAiProvider
-      ) => (config.get<string>('AI_PROVIDER') === 'groq' ? groq : openai),
-      inject: [ConfigService, OpenAIInvitationAiProvider, GroqInvitationAiProvider],
-    },
+    { provide: INVITATION_AI_PROVIDER, useExisting: OpenAIInvitationAiProvider },
   ],
+  exports: [InvitationDesignsService, INVITATION_AI_PROVIDER],
 })
 export class InvitationDesignsModule {}

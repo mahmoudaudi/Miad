@@ -1,5 +1,5 @@
 // =============================================================================
-// Prisma schema — AI-Powered Event Invitation Platform (Nvite).
+// Prisma schema — AI-Powered Event Invitation Platform (Miad).
 //
 // Implemented from the approved Database Structure (16 tables).
 // - Model/field names are PascalCase/camelCase in code...
@@ -29,12 +29,14 @@ model Role {
 
 model User {
   id           String   @id @default(uuid()) @db.Uuid
-  roleId       String   @db.Uuid @map("role_id")
-  firstName    String   @db.VarChar(100) @map("first_name")
-  lastName     String   @db.VarChar(100) @map("last_name")
+  roleId       String   @map("role_id") @db.Uuid
+  firstName    String   @map("first_name") @db.VarChar(100)
+  lastName     String   @map("last_name") @db.VarChar(100)
   email        String   @unique @db.VarChar(255)
-  passwordHash String   @db.Text @map("password_hash")
+  passwordHash String   @map("password_hash") @db.Text
   isActive     Boolean  @map("is_active")
+  // Bumped on logout/password change — invalidates all issued tokens.
+  tokenVersion Int      @default(0) @map("token_version")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -44,21 +46,24 @@ model User {
   mediaAssets   MediaAsset[]
   aiUsage       AiUsage[]
   subscriptions Subscription[]
+  communityDesigns CommunityDesign[]
+  oauthAccounts OAuthAccount[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
 }
 
 model Event {
   id           String    @id @default(uuid()) @db.Uuid
-  userId       String    @db.Uuid @map("user_id")
+  userId       String    @map("user_id") @db.Uuid
   title        String    @db.VarChar(255)
-  eventType    String    @db.VarChar(100) @map("event_type")
+  eventType    String    @map("event_type") @db.VarChar(100)
   description  String?   @db.Text
-  eventDate    DateTime  @db.Date @map("event_date")
-  startTime    DateTime? @db.Time @map("start_time")
-  endTime      DateTime? @db.Time @map("end_time")
-  venueName    String?   @db.VarChar(255) @map("venue_name")
-  venueAddress String?   @db.Text @map("venue_address")
+  eventDate    DateTime  @map("event_date") @db.Date
+  startTime    DateTime? @map("start_time") @db.Time
+  endTime      DateTime? @map("end_time") @db.Time
+  venueName    String?   @map("venue_name") @db.VarChar(255)
+  venueAddress String?   @map("venue_address") @db.Text
   latitude     Decimal?  @db.Decimal(10, 7)
   longitude    Decimal?  @db.Decimal(10, 7)
   createdAt    DateTime  @default(now()) @map("created_at")
@@ -67,34 +72,36 @@ model Event {
   user       User        @relation(fields: [userId], references: [id])
   invitation Invitation?
 
+  @@index([userId])
   @@map("events")
 }
 
 model Invitation {
   id          String    @id @default(uuid()) @db.Uuid
-  eventId     String    @unique @db.Uuid @map("event_id")
+  eventId     String    @unique @map("event_id") @db.Uuid
   slug        String    @unique @db.VarChar(255)
   status      String    @db.VarChar(30)
   publishedAt DateTime? @map("published_at")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  event     Event               @relation(fields: [eventId], references: [id])
-  designs   InvitationDesign[]
-  guests    Guest[]
-  media     MediaAsset[]
-  aiUsage   AiUsage[]
-  views     InvitationView[]
+  event   Event              @relation(fields: [eventId], references: [id])
+  designs InvitationDesign[]
+  guests  Guest[]
+  media   MediaAsset[]
+  aiUsage AiUsage[]
+  views   InvitationView[]
+  communityDesign CommunityDesign?
 
   @@map("invitations")
 }
 
 model InvitationDesign {
   id                  String   @id @default(uuid()) @db.Uuid
-  invitationId        String   @db.Uuid @map("invitation_id")
+  invitationId        String   @map("invitation_id") @db.Uuid
   version             Int
-  designSpecification Json     @db.JsonB @map("design_specification")
-  sourceType          String   @db.VarChar(30) @map("source_type")
+  designSpecification Json     @map("design_specification") @db.JsonB
+  sourceType          String   @map("source_type") @db.VarChar(30)
   isActive            Boolean  @map("is_active")
   createdAt           DateTime @default(now()) @map("created_at")
 
@@ -106,7 +113,7 @@ model InvitationDesign {
 
 model Guest {
   id           String   @id @default(uuid()) @db.Uuid
-  invitationId String   @db.Uuid @map("invitation_id")
+  invitationId String   @map("invitation_id") @db.Uuid
   name         String   @db.VarChar(255)
   email        String?  @db.VarChar(255)
   phone        String?  @db.VarChar(50)
@@ -116,12 +123,13 @@ model Guest {
   invitation Invitation @relation(fields: [invitationId], references: [id])
   rsvp       Rsvp?
 
+  @@index([invitationId])
   @@map("guests")
 }
 
 model Rsvp {
   id             String    @id @default(uuid()) @db.Uuid
-  guestId        String    @unique @db.Uuid @map("guest_id")
+  guestId        String    @unique @map("guest_id") @db.Uuid
   /// ATTENDING | NOT_ATTENDING | PENDING
   status         String    @db.VarChar(30)
   attendeesCount Int       @map("attendees_count")
@@ -137,7 +145,7 @@ model Rsvp {
 
 model Notification {
   id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid @map("user_id")
+  userId    String   @map("user_id") @db.Uuid
   type      String   @db.VarChar(50)
   title     String   @db.VarChar(255)
   message   String   @db.Text
@@ -146,33 +154,102 @@ model Notification {
 
   user User @relation(fields: [userId], references: [id])
 
+  @@index([userId, createdAt, id])
   @@map("notifications")
 }
 
 model MediaAsset {
   id           String   @id @default(uuid()) @db.Uuid
-  userId       String   @db.Uuid @map("user_id")
-  invitationId String   @db.Uuid @map("invitation_id")
-  fileName     String   @db.VarChar(255) @map("file_name")
-  fileUrl      String   @db.Text @map("file_url")
-  fileType     String   @db.VarChar(100) @map("file_type")
+  userId       String   @map("user_id") @db.Uuid
+  invitationId String   @map("invitation_id") @db.Uuid
+  fileName     String   @map("file_name") @db.VarChar(255)
+  fileUrl      String   @map("file_url") @db.Text
+  fileType     String   @map("file_type") @db.VarChar(100)
   fileSize     BigInt   @map("file_size")
   createdAt    DateTime @default(now()) @map("created_at")
 
   user       User       @relation(fields: [userId], references: [id])
   invitation Invitation @relation(fields: [invitationId], references: [id])
 
+  @@index([invitationId])
   @@map("media_assets")
 }
 
+model Template {
+  id            String   @id @default(uuid()) @db.Uuid
+  slug          String   @unique @db.VarChar(100)
+  name          String   @db.VarChar(100)
+  description   String   @db.VarChar(500)
+  category      String   @db.VarChar(50)
+  specification Json     @db.JsonB
+  isActive      Boolean  @default(true) @map("is_active")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("templates")
+}
+
+model CommunityDesign {
+  id                  String   @id @default(uuid()) @db.Uuid
+  creatorId           String   @map("creator_id") @db.Uuid
+  invitationId        String   @unique @map("invitation_id") @db.Uuid
+  slug                String   @unique @db.VarChar(120)
+  title               String   @db.VarChar(120)
+  description         String   @db.VarChar(500)
+  category            String   @db.VarChar(50)
+  designSpecification Json     @map("design_specification") @db.JsonB
+  isPublished         Boolean  @default(true) @map("is_published")
+  views               Int      @default(0)
+  likes               Int      @default(0)
+  saves               Int      @default(0)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  creator     User       @relation(fields: [creatorId], references: [id])
+  invitation  Invitation @relation(fields: [invitationId], references: [id])
+
+  @@index([isPublished, category, createdAt])
+  @@index([creatorId, createdAt])
+  @@map("community_designs")
+}
+
+model OAuthAccount {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  provider          String   @db.VarChar(30)
+  providerAccountId String   @map("provider_account_id") @db.VarChar(255)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("oauth_accounts")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.VarChar(128)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
+  @@map("password_reset_tokens")
+}
+
 model AiUsage {
-  id           String   @id @default(uuid()) @db.Uuid
-  userId       String   @db.Uuid @map("user_id")
-  invitationId String   @db.Uuid @map("invitation_id")
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  invitationId  String   @map("invitation_id") @db.Uuid
   /// GENERATE_DESIGN | EDIT_DESIGN
-  operationType String  @db.VarChar(50) @map("operation_type")
-  status        String  @db.VarChar(30)
-  tokensUsed    Int?    @map("tokens_used")
+  operationType String   @map("operation_type") @db.VarChar(50)
+  status        String   @db.VarChar(30)
+  tokensUsed    Int?     @map("tokens_used")
   createdAt     DateTime @default(now()) @map("created_at")
 
   user       User       @relation(fields: [userId], references: [id])
@@ -183,9 +260,9 @@ model AiUsage {
 
 model InvitationView {
   id                String   @id @default(uuid()) @db.Uuid
-  invitationId      String   @db.Uuid @map("invitation_id")
-  sessionIdentifier String?  @db.VarChar(255) @map("session_identifier")
-  deviceType        String?  @db.VarChar(30) @map("device_type")
+  invitationId      String   @map("invitation_id") @db.Uuid
+  sessionIdentifier String?  @map("session_identifier") @db.VarChar(255)
+  deviceType        String?  @map("device_type") @db.VarChar(30)
   country           String?  @db.VarChar(100)
   viewedAt          DateTime @default(now()) @map("viewed_at")
 
@@ -199,7 +276,7 @@ model Plan {
   name            String   @unique @db.VarChar(100)
   description     String?  @db.Text
   price           Decimal  @db.Decimal(10, 2)
-  billingInterval String   @db.VarChar(30) @map("billing_interval")
+  billingInterval String   @map("billing_interval") @db.VarChar(30)
   isActive        Boolean  @map("is_active")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
@@ -222,8 +299,8 @@ model Feature {
 
 model PlanFeature {
   id         String  @id @default(uuid()) @db.Uuid
-  planId     String  @db.Uuid @map("plan_id")
-  featureId  String  @db.Uuid @map("feature_id")
+  planId     String  @map("plan_id") @db.Uuid
+  featureId  String  @map("feature_id") @db.Uuid
   enabled    Boolean
   limitValue Int?    @map("limit_value")
 
@@ -236,8 +313,8 @@ model PlanFeature {
 
 model Subscription {
   id        String    @id @default(uuid()) @db.Uuid
-  userId    String    @db.Uuid @map("user_id")
-  planId    String    @db.Uuid @map("plan_id")
+  userId    String    @map("user_id") @db.Uuid
+  planId    String    @map("plan_id") @db.Uuid
   status    String    @db.VarChar(30)
   startDate DateTime  @map("start_date")
   endDate   DateTime? @map("end_date")
@@ -254,11 +331,11 @@ model Subscription {
 
 model Payment {
   id                   String   @id @default(uuid()) @db.Uuid
-  subscriptionId       String   @db.Uuid @map("subscription_id")
+  subscriptionId       String   @map("subscription_id") @db.Uuid
   amount               Decimal  @db.Decimal(10, 2)
   currency             String   @db.VarChar(10)
   status               String   @db.VarChar(30)
-  transactionReference String?  @unique @db.VarChar(255) @map("transaction_reference")
+  transactionReference String?  @unique @map("transaction_reference") @db.VarChar(255)
   paymentDate          DateTime @map("payment_date")
   createdAt            DateTime @default(now()) @map("created_at")
 

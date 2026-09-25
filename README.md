@@ -64,15 +64,17 @@ npm install
 Copy `.env.example` → `.env`. Per-app templates: `apps/web/.env.example`,
 `apps/api/.env.example`, `apps/ai-service/.env.example`.
 
-| Variable                                  | Used by      | Notes                                                                               |
-| ----------------------------------------- | ------------ | ----------------------------------------------------------------------------------- |
-| `DATABASE_URL`                            | api, prisma  | e.g. `postgresql://postgres:postgres@localhost:5432/event_invitation?schema=public` |
-| `JWT_SECRET`                              | api          | min 16 chars, never commit real value                                               |
-| `PORT`                                    | api          | default `3001`                                                                      |
-| `CORS_ORIGINS`                            | api          | comma-separated, default `http://localhost:3000`                                    |
-| `NEXT_PUBLIC_API_URL`                     | web          | e.g. `http://localhost:3001/api/v1` (only `NEXT_PUBLIC_*` reaches the browser)      |
-| `AI_SERVICE_URL`                          | api (server) | default `http://localhost:8000`                                                     |
-| `AI_PROVIDER` / `AI_API_KEY` / `AI_MODEL` | ai-service   | empty until provider chosen; never commit keys                                      |
+| Variable                                   | Used by      | Notes                                                                               |
+| ------------------------------------------ | ------------ | ----------------------------------------------------------------------------------- |
+| `DATABASE_URL`                             | api, prisma  | e.g. `postgresql://postgres:postgres@localhost:5432/event_invitation?schema=public` |
+| `JWT_SECRET`                               | api          | min 16 chars, never commit real value                                               |
+| `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | api          | min 32 chars each (`openssl rand -hex 32`), never commit                            |
+| `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL`       | api          | defaults `15m` / `30d`                                                              |
+| `PORT`                                     | api          | default `3001`                                                                      |
+| `CORS_ORIGINS`                             | api          | comma-separated, default `http://localhost:3000`                                    |
+| `NEXT_PUBLIC_API_URL`                      | web          | e.g. `http://localhost:3001/api/v1` (only `NEXT_PUBLIC_*` reaches the browser)      |
+| `AI_SERVICE_URL`                           | api (server) | default `http://localhost:8000`                                                     |
+| `AI_PROVIDER` / `AI_API_KEY` / `AI_MODEL`  | ai-service   | empty until provider chosen; never commit keys                                      |
 
 `.env` is git-ignored. Never hard-code secrets.
 

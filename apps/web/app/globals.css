@@ -1,3 +1,466 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+@media (max-width: 639px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='color']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Brand wordmark — owner-provided local file, no CDN dependency. */
+@font-face {
+  font-family: 'MetroScript';
+  src: url('/fonts/metroscript-regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Modal motion — subtle fade + rise. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.18s ease-out;
+}
+
+.animate-modal-pop {
+  animation: modal-pop 0.2s ease-out;
+}
+
+.font-inter {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.font-cinzel {
+  font-family: 'Cinzel', Georgia, serif;
+}
+
+.font-cormorant {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+}
+
+.font-syne {
+  font-family: 'Syne', 'Inter', system-ui, sans-serif;
+}
+
+.template-checker {
+  background-image: repeating-conic-gradient(#000 0 25%, #fff 0 50%);
+  background-size: 14px 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-modal-pop {
+    animation: none;
+  }
+}
+
+/* Miad foundations: four-point spacing, warm surfaces and a single brand accent. */
+:root {
+  --background: 252 250 248;
+  --foreground: 23 23 23;
+  --primary: 122 38 58;
+  --secondary: 244 234 229;
+  --border: 228 222 216;
+  --motion-fast: 160ms;
+  --motion-normal: 240ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  src: url('/fonts/material-symbols-outlined-v374.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+}
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid rgb(var(--primary));
+    outline-offset: 3px;
+  }
+  :where(input, select, textarea) {
+    min-width: 0;
+    max-width: 100%;
+  }
+  :where(input[type='checkbox'], input[type='radio'], input[type='range']) {
+    accent-color: rgb(var(--primary));
+  }
+  :where(fieldset) {
+    min-width: 0;
+  }
+  :where(h1, h2, h3, p) {
+    overflow-wrap: anywhere;
+  }
+  :where(button) {
+    -webkit-tap-highlight-color: transparent;
+  }
+  :where(button:disabled) {
+    cursor: not-allowed;
+  }
+  :where(section[id]) {
+    scroll-margin-top: 6rem;
+  }
+  ::selection {
+    background: rgb(var(--secondary));
+    color: rgb(var(--primary));
+  }
+}
+
+@layer components {
+  .miad-button {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-label-md font-medium;
+    transition:
+      transform var(--motion-fast) var(--motion-ease),
+      background-color var(--motion-fast),
+      border-color var(--motion-fast),
+      box-shadow var(--motion-fast);
+  }
+  .miad-button:active:not(:disabled) {
+    transform: translateY(1px) scale(0.98);
+  }
+  .miad-button:disabled {
+    opacity: 0.55;
+  }
+  .miad-button--primary {
+    @apply bg-primary text-white hover:bg-primary-hover;
+  }
+  .miad-button--secondary {
+    @apply border border-line bg-surface text-ink hover:border-accent;
+  }
+  .miad-button--ghost {
+    @apply text-ink hover:bg-secondary;
+  }
+  .miad-button--destructive {
+    @apply bg-error text-white hover:bg-error/90;
+  }
+  .miad-input {
+    @apply w-full rounded-xl border border-line bg-surface px-3.5 py-3 text-body-md text-ink placeholder:text-muted;
+    transition:
+      border-color var(--motion-fast),
+      box-shadow var(--motion-fast);
+  }
+  .miad-input:focus {
+    outline: none;
+    border-color: rgb(var(--primary));
+    box-shadow: 0 0 0 3px rgb(var(--primary) / 0.1);
+  }
+  .miad-input[aria-invalid='true'] {
+    @apply border-error;
+  }
+  .miad-input:disabled {
+    @apply cursor-not-allowed opacity-60;
+  }
+  .miad-popover {
+    @apply absolute z-[60] w-64 rounded-2xl border border-line bg-surface p-2 shadow-lift;
+    max-width: calc(100vw - 2rem);
+    animation: modal-pop var(--motion-normal) var(--motion-ease);
+  }
+  .miad-menu-item {
+    @apply flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-body-sm hover:bg-secondary;
+  }
+  .miad-page {
+    @apply mx-auto w-full max-w-[1200px] px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12;
+  }
+  .miad-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-primary;
+  }
+  .miad-skip {
+    @apply sr-only focus:not-sr-only focus:fixed focus:start-4 focus:top-4 focus:z-[100] focus:rounded-xl focus:bg-surface focus:px-4 focus:py-3;
+  }
+}
+
+/* Existing controls inherit touch size without affecting published canvas content. */
+.miad-workspace :where(button:not(.miad-canvas-control), a[class*='rounded']) {
+  min-height: 44px;
+}
+.miad-workspace :where(main) {
+  min-width: 0;
+}
+.miad-workspace :where(main > div, main > section, main > article) {
+  min-width: 0;
+}
+.miad-workspace
+  :where(
+    input:not([type='color']):not([type='checkbox']):not([type='radio']):not([type='range']),
+    select
+  ) {
+  min-height: 44px;
+}
+.miad-workspace :where([role='alert']) {
+  border-radius: 12px;
+}
+.miad-workspace :where([role='dialog']) {
+  animation: modal-pop var(--motion-normal) var(--motion-ease);
+}
+
+.miad-action {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-width: 9rem;
+}
+.miad-action-label {
+  display: inline-block;
+  animation: miad-roll var(--motion-normal) var(--motion-ease);
+}
+.miad-action-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.miad-action[data-state='loading'] .miad-delete-icon {
+  animation: miad-trash 650ms var(--motion-ease) infinite;
+}
+.miad-action[data-state='loading'] .miad-delete-label {
+  animation: miad-discard 650ms var(--motion-ease) infinite;
+}
+.miad-send {
+  border-radius: 999px;
+  background: #22201f;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+.miad-send:hover:not(:disabled) {
+  background: #302629;
+  box-shadow:
+    0 0 0 4px rgb(var(--primary) / 0.08),
+    inset 0 0 0 1px #a47786;
+}
+.miad-send:hover .miad-action-icon {
+  transform: translate(2px, -2px);
+}
+.miad-send .miad-action-icon {
+  transition: transform var(--motion-normal) var(--motion-ease);
+}
+.miad-send[data-state='loading'] .miad-action-icon {
+  animation: miad-send 900ms ease-in-out infinite;
+}
+.miad-action[data-state='success'] {
+  background: #2f6b45;
+  color: white;
+}
+.miad-action[data-state='error'] {
+  box-shadow: inset 0 0 0 2px #ba1a1a;
+}
+@keyframes miad-roll {
+  from {
+    opacity: 0;
+    transform: translateY(70%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes miad-trash {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  35% {
+    transform: rotate(-14deg) translateY(-2px);
+  }
+  70% {
+    transform: rotate(8deg);
+  }
+}
+@keyframes miad-discard {
+  0%,
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+  60% {
+    transform: translate(-12px, 10px) rotate(-8deg) scale(0.8);
+    opacity: 0.25;
+  }
+}
+@keyframes miad-send {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(5px, -5px);
+  }
+}
+
+.miad-characters {
+  display: flex;
+  height: 92px;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 6px;
+  overflow: hidden;
+}
+.miad-character {
+  position: relative;
+  width: 52px;
+  height: 66px;
+  border-radius: 28px 28px 9px 9px;
+  background: #dfc4b9;
+  transform-origin: bottom;
+  transition: transform var(--motion-normal) var(--motion-ease);
+}
+.miad-character:nth-child(2) {
+  height: 88px;
+  background: #7a263a;
+}
+.miad-character:nth-child(3) {
+  height: 56px;
+  background: #b8b5a2;
+}
+.miad-character:nth-child(4) {
+  height: 74px;
+  background: #927d6c;
+}
+.miad-eyes {
+  display: flex;
+  position: absolute;
+  top: 23px;
+  left: 14px;
+  gap: 8px;
+  transition: transform var(--motion-normal) var(--motion-ease);
+  transform: translate(var(--eye-x, 0px), var(--eye-y, 0px));
+}
+.miad-eyes i {
+  width: 5px;
+  height: 7px;
+  border-radius: 50%;
+  background: #171717;
+  box-shadow: 0 0 0 3px #fff;
+}
+.miad-characters[data-away='true'] .miad-character {
+  transform: skewX(-7deg);
+}
+.miad-characters[data-away='true'] .miad-eyes {
+  transform: translate(-10px, -3px);
+}
+.miad-characters[data-away='true'] .miad-eyes i {
+  height: 2px;
+  box-shadow: none;
+  background: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+  .miad-characters .miad-eyes,
+  .miad-characters .miad-character {
+    transform: none !important;
+  }
+  .miad-button:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* The mobile editor has a reachable save bar and compact native accordions. */
+.miad-workspace {
+  --workspace-inset: 0px;
+}
+.miad-editor-group summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  list-style: none;
+}
+.miad-editor-group summary::-webkit-details-marker {
+  display: none;
+}
+.miad-editor-group summary::after {
+  content: '+';
+  color: rgb(var(--primary));
+  font-size: 20px;
+}
+.miad-editor-group[open] summary::after {
+  content: '−';
+}
+@media (min-width: 1024px) {
+  .miad-workspace[data-collapsed='false'] {
+    --workspace-inset: 256px;
+  }
+  .miad-workspace[data-collapsed='true'] {
+    --workspace-inset: 80px;
+  }
+}
+@media (max-width: 1279px) {
+  .miad-editor-toolbar {
+    position: fixed;
+    bottom: max(0.75rem, env(safe-area-inset-bottom));
+    left: calc(var(--workspace-inset) + 1rem);
+    right: 1rem;
+    z-index: 30;
+    box-shadow: 0 4px 24px #17171712;
+  }
+}
+.miad-popover > :nth-child(2) {
+  animation: modal-pop 240ms var(--motion-ease);
+}
+.miad-popover > :nth-child(3) {
+  animation: modal-pop 300ms var(--motion-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .miad-popover > * {
+    animation: none;
+  }
+}

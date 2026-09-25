@@ -11,7 +11,11 @@ import { InvitationDesignsService } from './invitation-designs.service';
 const invitationId = '11111111-1111-4111-8111-111111111111';
 const event = {
   title: 'Garden Dinner',
+  eventType: 'Dinner',
+  description: 'A calm evening among the garden',
   eventDate: new Date('2026-12-12T00:00:00.000Z'),
+  startTime: new Date('1970-01-01T18:30:00.000Z'),
+  endTime: new Date('1970-01-01T22:00:00.000Z'),
   venueName: 'The Garden Room',
   venueAddress: null,
 };
@@ -106,6 +110,8 @@ describe('InvitationDesignsService', () => {
         designs: { where: { isActive: true }, take: 1 },
       },
     });
+    expect(result).toHaveProperty('designSpecification');
+    if (!('designSpecification' in result)) throw new Error('Expected a legacy design response.');
     expect(result.designSpecification).toMatchObject(specification);
     expect(result.designSpecification.sections).toHaveLength(4);
     expect(result.designSpecification.elements).toHaveLength(4);
@@ -356,6 +362,134 @@ describe('InvitationDesignsService', () => {
     });
   });
 
+  it('generates, sanitizes, and versions standalone HTML without reading a current design', async () => {
+    const calls: unknown[] = [];
+    let providerInput: Record<string, unknown> | undefined;
+    const prisma = {
+      invitation: {
+        findFirst: async (args: unknown) => {
+          expect(args).toMatchObject({
+            where: { id: invitationId, event: { userId: 'owner-1' } },
+            select: { designs: { select: { version: true } } },
+          });
+          return { id: invitationId, event, designs: [{ version: 1 }] };
+        },
+      },
+      invitationDesign: {
+        updateMany: async (args: unknown) => {
+          calls.push(args);
+          return { count: 1 };
+        },
+        create: async (args: { data: Record<string, unknown> }) => {
+          calls.push(args);
+          return {
+            ...designRecord,
+            version: 2,
+            sourceType: 'AI_GENERATED',
+            designSpecification: args.data.designSpecification,
+          };
+        },
+      },
+      aiUsage: {
+        create: async (args: unknown) => {
+          calls.push(args);
+          return { id: 'usage-html' };
+        },
+      },
+      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    };
+    const provider = {
+      generateHtml: async (input: Record<string, unknown>) => {
+        providerInput = input;
+        return {
+          provider: 'test',
+          model: 'test-model',
+          tokensUsed: 654,
+          artifact: {
+            title: 'Garden Dinner',
+            description: 'A calm evening among the garden',
+            body: '<main class="card"><h1>Garden Dinner</h1><script>alert(1)</script></main>',
+            css: 'body{background:url(https://tracker.example);color:#123}.card{display:grid}',
+          },
+        };
+      },
+    };
+
+    const result = await new InvitationDesignsService(
+      prisma as never,
+      provider as never
+    ).generateHtmlWithAi('owner-1', invitationId, 'Create a calm garden dinner invitation');
+
+    expect(providerInput).toEqual({
+      prompt: 'Create a calm garden dinner invitation',
+      event: {
+        title: 'Garden Dinner',
+        eventType: 'Dinner',
+        description: 'A calm evening among the garden',
+        eventDate: '2026-12-12',
+        startTime: '18:30',
+        endTime: '22:00',
+        venueName: 'The Garden Room',
+        venueAddress: null,
+      },
+    });
+    expect(providerInput).not.toHaveProperty('currentDesign');
+    expect(providerInput).not.toHaveProperty('specification');
+    expect(calls[1]).toMatchObject({
+      data: {
+        invitationId,
+        version: 2,
+        sourceType: 'AI_GENERATED',
+        designSpecification: {
+          format: 'html',
+          version: 1,
+          body: '<main class="card"><h1>Garden Dinner</h1></main>',
+          css: 'body{color:#123}.card{display:grid}',
+        },
+      },
+    });
+    expect(calls[2]).toMatchObject({
+      data: { operationType: 'GENERATE_DESIGN', status: 'SUCCEEDED', tokensUsed: 654 },
+    });
+    expect(result).toMatchObject({
+      version: 2,
+      sourceType: 'AI_GENERATED',
+      artifact: { format: 'html', version: 1 },
+    });
+    expect(result).not.toHaveProperty('designSpecification');
+  });
+
+  it('keeps HTML artifacts out of the legacy public JSON body and exposes render metadata', async () => {
+    const stored = {
+      format: 'html',
+      version: 1,
+      title: 'Garden Dinner',
+      description: 'A calm evening',
+      body: '<main><h1>Garden Dinner</h1><script>alert(1)</script></main>',
+      css: 'body{color:#123}',
+    };
+    const service = new InvitationDesignsService({
+      invitation: {
+        findFirst: async () => ({ event, designs: [{ designSpecification: stored }] }),
+      },
+    } as never);
+
+    await expect(service.findPublished('garden-dinner')).resolves.toEqual({
+      artifact: {
+        format: 'html',
+        version: 1,
+        title: 'Garden Dinner',
+        description: 'A calm evening',
+      },
+      renderPath: '/api/v1/public/invitations/garden-dinner/render',
+    });
+    await expect(service.findPublishedRenderable('garden-dinner')).resolves.toEqual({
+      ...stored,
+      body: '<main><h1>Garden Dinner</h1></main>',
+      css: 'body{color:#123}',
+    });
+  });
+
   it('logs failed AI usage and returns a safe configuration error', async () => {
     const calls: unknown[] = [];
     const prisma = {
@@ -448,10 +582,7 @@ describe('InvitationDesignsService', () => {
         throw new InvitationAiProviderError('upstream 500: stack trace here', 'provider');
       },
     };
-    const error = await new InvitationDesignsService(
-      prisma as never,
-      provider as never
-    )
+    const error = await new InvitationDesignsService(prisma as never, provider as never)
       .generateWithAi('owner-1', invitationId, { prompt: 'Create a garden invitation' })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(BadGatewayException);

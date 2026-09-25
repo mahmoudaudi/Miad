@@ -1,15 +1,40 @@
-import type { ButtonHTMLAttributes } from 'react';
+import React, { forwardRef, type ButtonHTMLAttributes } from 'react';
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
+export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'destructive';
+  busy?: boolean;
+};
 
-/** Minimal reusable button — styling foundation only, no design system yet. */
-export function Button({ children, ...rest }: ButtonProps) {
+const variants = {
+  primary: 'miad-button--primary',
+  secondary: 'miad-button--secondary',
+  ghost: 'miad-button--ghost',
+  destructive: 'miad-button--destructive',
+} as const;
+
+/** Shared control; native button semantics and caller-supplied accessible name. */
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    children,
+    className = '',
+    variant = 'primary',
+    busy = false,
+    disabled,
+    type = 'button',
+    ...rest
+  },
+  ref
+) {
   return (
     <button
-      className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+      ref={ref}
+      type={type}
+      className={`miad-button ${variants[variant]} ${className}`}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
       {...rest}
     >
       {children}
     </button>
   );
-}
+});

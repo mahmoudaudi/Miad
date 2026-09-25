@@ -127,9 +127,7 @@ export function CreateEventClient() {
       setFailedInvitation({
         invitationId: failedInvitation.invitationId,
         message:
-          caught instanceof ApiError
-            ? caught.message
-            : 'AI generation is unavailable right now.',
+          caught instanceof ApiError ? caught.message : 'AI generation is unavailable right now.',
       });
     } finally {
       setGenerating(false);
@@ -140,7 +138,7 @@ export function CreateEventClient() {
     <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14 lg:py-16">
       <Link
         href="/dashboard/invitations"
-        className="rounded-lg text-label-md text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7A263A]"
+        className="rounded-lg text-label-md text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         ← Back to Invitations
       </Link>
@@ -154,9 +152,9 @@ export function CreateEventClient() {
       {savedPrompt && (
         <div
           role="status"
-          className="mt-6 flex items-start gap-3 rounded-xl border border-[#7A263A]/20 bg-[#F7EFEC] px-4 py-3 text-body-sm text-ink"
+          className="mt-6 flex items-start gap-3 rounded-xl border border-primary/20 bg-secondary px-4 py-3 text-body-sm text-ink"
         >
-          <span className="material-symbols-outlined text-lg text-[#7A263A]" aria-hidden="true">
+          <span className="material-symbols-outlined text-lg text-primary" aria-hidden="true">
             auto_awesome
           </span>
           <span>

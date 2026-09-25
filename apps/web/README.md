@@ -1,6 +1,7 @@
-# apps/web — Next.js frontend foundation
+# apps/web — Next.js frontend
 
-Setup-phase only. No product screens implemented.
+Implemented scope: the public landing page, authentication UI, and protected
+user dashboard. Other product features are intentionally not implemented yet.
 
 ## Scripts
 
@@ -12,6 +13,12 @@ Setup-phase only. No product screens implemented.
 
 ## Structure
 
-- `app/` — App Router (layout + verification page only)
-- `components/` — minimal reusable `Button`, `Card`
-- `lib/` — `env`, `api-client`, `utils` foundation
+- `app/` — landing, login, registration, and protected dashboard routes
+- `components/auth/` — shared login and registration forms
+- `components/dashboard/` — authenticated dashboard state and Minimal Editorial UI
+- `components/landing/` — landing sections, auth modal, authenticated header/logout state
+- `lib/auth.ts` — cookie-auth client with one-time refresh recovery
+- `middleware.ts` — protected-route and auth-route redirect behavior
+
+The dashboard reuses `/api/v1/auth/me` for real account information. It does
+not expose event controls, statistics, or links for features that do not exist.

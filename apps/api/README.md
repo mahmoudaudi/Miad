@@ -1,17 +1,28 @@
-# apps/api — NestJS backend foundation
+# apps/api — NestJS backend (foundation + auth)
 
-Setup-phase only. No business features implemented.
-
-## Endpoint
+## Endpoints
 
 - `GET /api/v1/health` → `{ "status": "ok", "service": "api", "timestamp": "..." }`
+- `POST /api/v1/auth/register` → creates user (role `user`), sets auth cookies
+- `POST /api/v1/auth/login` → sets auth cookies (rate-limited, generic 401s)
+- `POST /api/v1/auth/refresh` → rotates the token pair via refresh cookie
+- `POST /api/v1/auth/logout` → clears auth cookies
+- `GET /api/v1/auth/me` → current user (JWT guard, cookie or Bearer)
+
+Auth uses short-lived access JWT (15m) + one-time rotating refresh JWT (30d)
+in httpOnly cookies. Every token carries a version (`users.token_version`).
+Refresh atomically consumes the presented version and issues the next one, so
+the previous refresh/access pair cannot be reused. Logout bumps the version
+again, instantly invalidating the current pair. RBAC uses the current database
+role through `JwtAuthGuard` + `RolesGuard`. Seed roles first with
+`npm run db:seed`.
 
 ## Scripts
 
 - `npm run start:dev --workspace=@app/api` — dev server on :3001
 - `npm run build --workspace=@app/api`
 - `npm run test --workspace=@app/api` — unit tests
-- `npm run test:e2e --workspace=@app/api` — API e2e test (health)
+- `npm run test:e2e --workspace=@app/api` — health + full auth lifecycle E2E
 
 ## Conventions
 
