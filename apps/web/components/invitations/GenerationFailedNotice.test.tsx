@@ -57,4 +57,16 @@ describe('GenerationFailedNotice', () => {
     expect(html).toContain('<button');
     expect(html).toContain('Open editor');
   });
+
+  it('omits the retry action when none is provided and keeps manual recovery', () => {
+    const html = renderToStaticMarkup(
+      <GenerationFailedNotice message="AI generation failed." editorHref={editorHref} />
+    );
+    expect(html).toContain('Your invitation was created');
+    expect(html).toContain('AI generation failed.');
+    expect(html).not.toContain('Retry AI generation');
+    expect(html).not.toContain('<button');
+    expect(html).toContain(`href="${editorHref}"`);
+    expect(html).toContain('Open editor');
+  });
 });

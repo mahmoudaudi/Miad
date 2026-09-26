@@ -4,6 +4,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
   ServiceUnavailableException,
@@ -12,8 +13,10 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   INVITATION_AI_PROVIDER,
+  AiGenerationCancelledError,
   InvitationAiProvider,
   InvitationAiProviderError,
+  type GeneratedWebsiteProject,
 } from './ai-provider.types';
 import type { InvitationThemeId } from './dto/set-invitation-design.dto';
 import type {
@@ -258,6 +261,7 @@ export type InvitationHtmlDesignResponse = {
   invitationId: string;
   version: number;
   artifact: HtmlArtifactEnvelope;
+  project: GeneratedWebsiteProject;
   sourceType: string;
   isActive: boolean;
   createdAt: string;
@@ -273,6 +277,8 @@ export type PublicInvitationResponse =
 
 @Injectable()
 export class InvitationDesignsService {
+  private readonly logger = new Logger(InvitationDesignsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Optional()
@@ -539,7 +545,9 @@ export class InvitationDesignsService {
   async generateHtmlWithAi(
     userId: string,
     invitationId: string,
-    prompt: string
+    prompt: string,
+    onProgress?: (stage: 'PARSING_RESPONSE' | 'VALIDATING_WEBSITE' | 'SAVING_WEBSITE') => void,
+    signal?: AbortSignal
   ): Promise<InvitationHtmlDesignResponse> {
     const cleanPrompt = prompt.trim();
     if (cleanPrompt.length < 10 || cleanPrompt.length > 2_000) {
@@ -550,12 +558,19 @@ export class InvitationDesignsService {
       const result = await this.requireAiProvider().generateHtml({
         prompt: cleanPrompt,
         event: this.toAiEventContext(invitation.event),
+        onProgress,
+        signal,
       });
+      // A cancellation that lands after the provider responds must still win:
+      // never persist a design the caller no longer wants.
+      if (signal?.aborted) throw new AiGenerationCancelledError();
+      onProgress?.('VALIDATING_WEBSITE');
       const artifact = sanitizeHtmlArtifact({
         ...result.artifact,
         format: 'html',
         version: 1,
       });
+      onProgress?.('SAVING_WEBSITE');
       return this.persistHtmlVersion(
         userId,
         invitationId,
@@ -568,6 +583,21 @@ export class InvitationDesignsService {
         }
       );
     } catch (caught) {
+      if (caught instanceof HtmlArtifactValidationError) {
+        this.logger.debug({
+          event: 'html-artifact-validation-failure',
+          artifactField: caught.field,
+          category: caught.category,
+          rule: caught.rule,
+          contentLength: caught.contentLength,
+          source: caught.source,
+        });
+      }
+      // Caller cancellation is not a provider failure: no FAILED telemetry,
+      // no failure mapping, no persistence.
+      if (caught instanceof AiGenerationCancelledError || signal?.aborted) {
+        throw new AiGenerationCancelledError();
+      }
       const error =
         caught instanceof HtmlArtifactValidationError
           ? new InvitationAiProviderError(
@@ -577,6 +607,55 @@ export class InvitationDesignsService {
             )
           : caught;
       await this.logAiFailure(userId, invitationId, 'GENERATE_DESIGN');
+      this.rethrowAiError(error);
+    }
+  }
+
+  async refineHtmlWithAi(
+    userId: string,
+    invitationId: string,
+    instruction: string
+  ): Promise<InvitationHtmlDesignResponse> {
+    const cleanInstruction = instruction.trim();
+    if (cleanInstruction.length < 3 || cleanInstruction.length > 1_000) {
+      throw new BadRequestException(
+        'Refinement instruction must be between 3 and 1000 characters.'
+      );
+    }
+    const invitation = await this.findOwnedEventWithLatestVersion(userId, invitationId);
+    const latest = invitation.designs[0];
+    if (!latest?.isActive || !isHtmlArtifactEnvelope(latest.designSpecification)) {
+      throw new ConflictException('A generated website is required before it can be refined.');
+    }
+    try {
+      const currentArtifact = sanitizeHtmlArtifact(latest.designSpecification);
+      const result = await this.requireAiProvider().refineHtml({
+        prompt: cleanInstruction,
+        event: this.toAiEventContext(invitation.event),
+        project: this.toWebsiteProject(currentArtifact),
+      });
+      const artifact = sanitizeHtmlArtifact({
+        ...result.artifact,
+        format: 'html',
+        version: 1,
+      });
+      if (JSON.stringify(currentArtifact) === JSON.stringify(artifact)) {
+        throw new BadRequestException('Refinement changes are required.');
+      }
+      return this.persistHtmlVersion(userId, invitationId, latest.version, artifact, {
+        sourceType: 'AI_EDIT',
+        operationType: 'EDIT_DESIGN',
+        tokensUsed: result.tokensUsed,
+      });
+    } catch (caught) {
+      const error =
+        caught instanceof HtmlArtifactValidationError
+          ? new InvitationAiProviderError(
+              'AI returned an invalid website project.',
+              'invalid-output'
+            )
+          : caught;
+      await this.logAiFailure(userId, invitationId, 'EDIT_DESIGN');
       this.rethrowAiError(error);
     }
   }
@@ -646,7 +725,7 @@ export class InvitationDesignsService {
         designs: {
           orderBy: { version: 'desc' },
           take: 1,
-          select: { version: true },
+          select: designSelect,
         },
       },
     });
@@ -831,6 +910,17 @@ export class InvitationDesignsService {
     } catch (error) {
       this.rethrowWriteConflict(error);
     }
+  }
+
+  private toWebsiteProject(artifact: HtmlArtifactEnvelope): GeneratedWebsiteProject {
+    return {
+      name: artifact.title,
+      description: artifact.description,
+      files: [
+        { path: 'index.html', content: artifact.body },
+        { path: 'styles.css', content: artifact.css },
+      ],
+    };
   }
 
   private defaultSections(
@@ -1101,11 +1191,13 @@ export class InvitationDesignsService {
   }
 
   private toHtmlResponse(design: DesignResult): InvitationHtmlDesignResponse {
+    const artifact = sanitizeHtmlArtifact(design.designSpecification);
     return {
       id: design.id,
       invitationId: design.invitationId,
       version: design.version,
-      artifact: sanitizeHtmlArtifact(design.designSpecification),
+      artifact,
+      project: this.toWebsiteProject(artifact),
       sourceType: design.sourceType,
       isActive: design.isActive,
       createdAt: design.createdAt.toISOString(),

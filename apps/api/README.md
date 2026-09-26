@@ -30,3 +30,19 @@ role through `JwtAuthGuard` + `RolesGuard`. Seed roles first with
 - CORS allowlist via `CORS_ORIGINS`
 - `ValidationPipe` (whitelist/transform), `HttpExceptionFilter` envelope
 - Config via `@nestjs/config` + Joi validation
+
+## AI website generation
+
+AI Studio uses the NestJS API only; `apps/ai-service` is not part of this path.
+Set these server-side variables in `apps/api/.env` (never in the web app):
+
+```dotenv
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash
+```
+
+Authenticated generation and refinement are available at `POST /api/v1/ai/generate`
+and `POST /api/v1/ai/refine`. Generated projects contain only `index.html` and
+`styles.css`, are validated and sanitized before persistence, and are rendered
+in a CSP-locked, sandboxed iframe. Scripts, network access, external resources,
+cookies, and parent-window access are not permitted.

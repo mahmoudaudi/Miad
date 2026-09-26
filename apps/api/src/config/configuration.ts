@@ -10,10 +10,23 @@ export default () => ({
   supabaseUrl: process.env.SUPABASE_URL ?? '',
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
   aiServiceUrl: process.env.AI_SERVICE_URL ?? 'http://localhost:8000',
-  aiProvider: process.env.AI_PROVIDER || 'openai',
-  openaiApiKey: process.env.OPENAI_API_KEY ?? '',
-  openaiModel: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
-  openaiBaseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+  // OpenRouter is the registered invitation AI provider. This must not be
+  // altered by a legacy process-level AI_PROVIDER value.
+  aiProvider: 'openrouter',
+  // These values are deliberately server-only. Do not duplicate them in the
+  // web app or expose them through a NEXT_PUBLIC variable.
+  openrouterApiKey: process.env.OPENROUTER_API_KEY ?? '',
+  openrouterModel: process.env.OPENROUTER_MODEL ?? 'deepseek/deepseek-v4.1-flash',
+  openrouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1',
+  // Only short event-detail extraction has a budget (it fails safe to
+  // deterministic defaults). Website generation has no application-level
+  // deadline: it runs until the provider responds or the caller cancels.
+  // AI_PROVIDER_TIMEOUT_MS remains an extraction fallback for existing
+  // deployments.
+  openrouterExtractionTimeoutMs: parseInt(
+    process.env.OPENROUTER_EXTRACTION_TIMEOUT_MS ?? process.env.AI_PROVIDER_TIMEOUT_MS ?? '20000',
+    10
+  ),
   aiProviderTimeoutMs: parseInt(process.env.AI_PROVIDER_TIMEOUT_MS ?? '20000', 10),
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',

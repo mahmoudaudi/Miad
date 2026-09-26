@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Header } from '@/components/landing/Header';
 import { CommunityBrowser } from '@/components/community/CommunityBrowser';
 import { getCommunityDesigns } from '@/lib/community';
 
@@ -8,16 +9,36 @@ export default async function CommunityPage() {
   try {
     const designs = await getCommunityDesigns();
     return (
-      <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8 lg:py-14">
-        <header className="max-w-2xl">
-          <p className="text-label-sm uppercase tracking-[0.16em] text-accent">Community</p>
-          <h1 className="mt-3 font-display text-headline-lg-mobile text-ink sm:text-headline-lg">Designs made in Miad</h1>
-          <p className="mt-4 text-body-lg text-muted">Browse public inspiration from the Miad community and start your own invitation from a design you love.</p>
-        </header>
-        <section className="mt-10"><CommunityBrowser designs={designs} /></section>
-      </main>
+      <div className="min-h-screen bg-background pt-20">
+        <Header />
+        <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8 lg:py-14">
+          <header className="max-w-2xl">
+            <p className="text-label-sm uppercase tracking-[0.16em] text-accent">Community</p>
+            <h1 className="mt-3 font-display text-headline-lg-mobile text-ink sm:text-headline-lg">
+              Designs made in Miad
+            </h1>
+            <p className="mt-4 text-body-lg text-muted">
+              Browse public inspiration from the Miad community and start your own invitation from a
+              design you love.
+            </p>
+          </header>
+          <section className="mt-10">
+            <CommunityBrowser designs={designs} />
+          </section>
+        </main>
+      </div>
     );
   } catch {
-    return <main className="mx-auto max-w-2xl px-4 py-16 text-center"><h1 className="font-display text-headline-md text-ink">Community unavailable</h1><p role="alert" className="mt-3 text-body-md text-muted">We could not load community designs. Please try again later.</p></main>;
+    return (
+      <div className="min-h-screen bg-background pt-20">
+        <Header />
+        <main className="mx-auto max-w-2xl px-4 py-16 text-center">
+          <h1 className="font-display text-headline-md text-ink">Community unavailable</h1>
+          <p role="alert" className="mt-3 text-body-md text-muted">
+            We could not load community designs. Please try again later.
+          </p>
+        </main>
+      </div>
+    );
   }
 }

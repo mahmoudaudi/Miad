@@ -16,25 +16,29 @@ export async function GET(
 ): Promise<NextResponse> {
   const apiBase = getApiUrl().replace(/\/$/, '');
   const cookie = request.headers.get('cookie');
-  const response = await fetch(
-    `${apiBase}/invitations/${encodeURIComponent(params.invitationId)}/design/render`,
-    {
-      cache: 'no-store',
-      headers: cookie ? { cookie } : undefined,
+  try {
+    const response = await fetch(
+      `${apiBase}/invitations/${encodeURIComponent(params.invitationId)}/design/render`,
+      {
+        cache: 'no-store',
+        headers: cookie ? { cookie } : undefined,
+      }
+    );
+    const body = await response.text();
+    if (!response.ok) {
+      return new NextResponse(body, {
+        status: response.status,
+        headers: { 'Content-Type': response.headers.get('content-type') ?? 'text/plain' },
+      });
     }
-  );
-  const body = await response.text();
-  if (!response.ok) {
-    return new NextResponse(body, {
-      status: response.status,
-      headers: { 'Content-Type': response.headers.get('content-type') ?? 'text/plain' },
-    });
+    const headers = new Headers({ 'Cache-Control': 'no-store' });
+    for (const name of forwardedHeaders) {
+      const value = response.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+    headers.set('Content-Type', 'text/html; charset=utf-8');
+    return new NextResponse(body, { status: response.status, headers });
+  } catch {
+    return new NextResponse('Service Unavailable', { status: 503 });
   }
-  const headers = new Headers({ 'Cache-Control': 'no-store' });
-  for (const name of forwardedHeaders) {
-    const value = response.headers.get(name);
-    if (value) headers.set(name, value);
-  }
-  headers.set('Content-Type', 'text/html; charset=utf-8');
-  return new NextResponse(body, { status: response.status, headers });
 }

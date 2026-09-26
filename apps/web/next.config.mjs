@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  optimizeFonts: false,
   images: {
     // All optimized sources are immutable local files, so the optimizer
     // output can live long in caches (default is 60s must-revalidate).

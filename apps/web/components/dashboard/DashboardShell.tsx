@@ -38,10 +38,10 @@ function StudioLoading({ label }: { label: string }) {
       <span className="sr-only">{label}</span>
       <div
         aria-hidden="true"
-        className="grid h-11 grid-cols-[minmax(0,1fr)_auto] border-b border-[#cfd4da] bg-[#f3f4f6] lg:grid-cols-[224px_430px_minmax(0,1fr)]"
+        className="grid h-12 grid-cols-[minmax(0,1fr)_auto] border-b border-[#cfd4da] bg-[#f8fafc] lg:grid-cols-[224px_430px_minmax(0,1fr)]"
       >
         <div className="flex items-center gap-2 border-e border-[#d7dbe0] px-3">
-          <div className="h-7 w-10 animate-pulse rounded bg-[#d1d5db]" />
+          <div className="h-6 w-10 animate-pulse rounded bg-[#d1d5db]" />
           <div className="h-3 w-14 animate-pulse rounded bg-[#d1d5db]" />
         </div>
         <div className="hidden items-center border-e border-[#d7dbe0] px-3 lg:flex">
@@ -51,7 +51,7 @@ function StudioLoading({ label }: { label: string }) {
           <div className="size-8 animate-pulse rounded-full bg-[#cbd5e1]" />
         </div>
       </div>
-      <div className="lg:grid lg:h-[calc(100dvh-44px)] lg:grid-cols-[224px_430px_minmax(0,1fr)] lg:overflow-hidden">
+      <div className="lg:grid lg:h-[calc(100dvh-48px)] lg:grid-cols-[224px_430px_minmax(0,1fr)] lg:overflow-hidden">
         <div className="hidden border-e border-[#d7dbe0] bg-[#f8fafc] p-3 lg:block">
           <div className="h-9 animate-pulse rounded-md bg-[#e2e8f0]" />
           <div className="mt-8 space-y-3">

@@ -16,9 +16,15 @@ export type CommunityDesignRecord = {
 };
 
 export async function getCommunityDesigns(): Promise<CommunityDesignRecord[]> {
-  const response = await fetch(`${getApiUrl().replace(/\/$/, '')}/community`, { next: { revalidate: 60 } });
-  if (!response.ok) throw new Error('Community designs are unavailable.');
-  return (await response.json()) as CommunityDesignRecord[];
+  try {
+    const response = await fetch(`${getApiUrl().replace(/\/$/, '')}/community`, {
+      next: { revalidate: 60 },
+    });
+    if (!response.ok) return [];
+    return (await response.json()) as CommunityDesignRecord[];
+  } catch {
+    return [];
+  }
 }
 
 export const applyCommunityDesign = (slug: string, invitationId: string) =>

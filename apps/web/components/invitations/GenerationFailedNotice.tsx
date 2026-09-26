@@ -3,19 +3,20 @@ import React from 'react';
 
 /**
  * Non-fatal creation outcome: the invitation was persisted but AI design
- * generation failed. Offers retry (existing `POST .../design/ai/generate`)
- * and the manual editor path — never a rollback.
+ * generation failed. Offers the manual editor path — never a rollback.
+ * A retry action (`onRetry`) is only rendered when explicitly provided; the
+ * AI Studio no longer offers regeneration and the user submits a new prompt.
  */
 export function GenerationFailedNotice({
   message,
   editorHref,
-  generating,
+  generating = false,
   onRetry,
 }: {
   message: string;
   editorHref: string;
-  generating: boolean;
-  onRetry: () => void;
+  generating?: boolean;
+  onRetry?: () => void;
 }) {
   return (
     <div
@@ -34,14 +35,16 @@ export function GenerationFailedNotice({
         </span>
       </p>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={generating}
-          className="inline-flex min-h-11 items-center justify-center rounded-xl bg-primary px-4 text-body-md font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
-          {generating ? 'Generating…' : 'Retry AI generation'}
-        </button>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={generating}
+            className="inline-flex min-h-11 items-center justify-center rounded-xl bg-primary px-4 text-body-md font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            {generating ? 'Generating…' : 'Retry AI generation'}
+          </button>
+        )}
         <Link
           href={editorHref}
           className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line bg-surface px-4 text-body-md font-medium text-ink transition-colors hover:border-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"

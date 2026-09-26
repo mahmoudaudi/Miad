@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { resolve } from 'node:path';
 import { AuthModule } from './auth/auth.module';
 import { AiStudioModule } from './ai-studio/ai-studio.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -23,6 +24,9 @@ import { TemplatesModule } from './templates/templates.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      // The API can be launched from the monorepo root, where a separate
+      // frontend environment file may exist. Always load this app's config.
+      envFilePath: resolve(__dirname, '..', '.env'),
       load: [configuration],
       validationSchema,
       validationOptions: { allowUnknown: true, abortEarly: false },

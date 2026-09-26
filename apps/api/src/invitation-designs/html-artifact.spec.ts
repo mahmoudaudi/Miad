@@ -54,12 +54,23 @@ describe('HTML artifact contract', () => {
       css: 'body{background:url(https://tracker.example/pixel);color:#123}',
     });
     expect(clean.css).toBe('body{color:#123}');
-    expect(() =>
+    let validationError: unknown;
+    try {
       sanitizeHtmlArtifact({
         ...artifact,
         css: 'body{color:\\75rl(https://tracker.example/pixel)}',
-      })
-    ).toThrow(HtmlArtifactValidationError);
+      });
+    } catch (error) {
+      validationError = error;
+    }
+    expect(validationError).toBeInstanceOf(HtmlArtifactValidationError);
+    expect(validationError).toMatchObject({
+      field: 'css',
+      source: 'css',
+      category: 'security',
+      rule: 'css-angle-or-backslash',
+      contentLength: 'body{color:\\75rl(https://tracker.example/pixel)}'.length,
+    });
     expect(() =>
       sanitizeHtmlArtifact({
         ...artifact,

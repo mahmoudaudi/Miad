@@ -409,9 +409,26 @@ export type PublicHtmlArtifactMetadata = Pick<
 >;
 
 export class HtmlArtifactValidationError extends Error {
-  constructor(readonly field: string) {
+  constructor(
+    /** Safe metadata only; never retain generated content in validation errors. */
+    readonly field: 'artifact' | 'title' | 'description' | 'html' | 'css' | 'nonce',
+    readonly category: string,
+    readonly rule: string,
+    readonly contentLength: number | null,
+    readonly source: 'metadata' | 'html' | 'css'
+  ) {
     super(`Invalid HTML artifact field: ${field}`);
   }
+}
+
+function artifactValidationError(
+  field: HtmlArtifactValidationError['field'],
+  category: string,
+  rule: string,
+  contentLength: number | null,
+  source: HtmlArtifactValidationError['source']
+): HtmlArtifactValidationError {
+  return new HtmlArtifactValidationError(field, category, rule, contentLength, source);
 }
 
 export function isHtmlArtifactEnvelope(value: unknown): value is HtmlArtifactEnvelope {
@@ -421,7 +438,9 @@ export function isHtmlArtifactEnvelope(value: unknown): value is HtmlArtifactEnv
 }
 
 export function sanitizeHtmlArtifact(value: unknown): HtmlArtifactEnvelope {
-  if (!isHtmlArtifactEnvelope(value)) throw new HtmlArtifactValidationError('format');
+  if (!isHtmlArtifactEnvelope(value)) {
+    throw artifactValidationError('artifact', 'contract', 'format-and-version', null, 'metadata');
+  }
   const title = plainText(value.title, HTML_ARTIFACT_LIMITS.title, 'title');
   const description = plainText(value.description, HTML_ARTIFACT_LIMITS.description, 'description');
   const body = sanitizeBody(value.body);
@@ -450,7 +469,7 @@ export function toPublicHtmlArtifactMetadata(
 export function renderHtmlDocument(artifactValue: unknown, nonce: string): string {
   const artifact = sanitizeHtmlArtifact(artifactValue);
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) {
-    throw new HtmlArtifactValidationError('nonce');
+    throw artifactValidationError('nonce', 'format', 'nonce-pattern', nonce.length, 'metadata');
   }
   const description = escapeHtml(artifact.description);
   const title = escapeHtml(artifact.title);
@@ -472,7 +491,7 @@ export function renderHtmlDocument(artifactValue: unknown, nonce: string): strin
 
 export function htmlContentSecurityPolicy(nonce: string): string {
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) {
-    throw new HtmlArtifactValidationError('nonce');
+    throw artifactValidationError('nonce', 'format', 'nonce-pattern', nonce.length, 'metadata');
   }
   return [
     "default-src 'none'",
@@ -571,8 +590,13 @@ export function escapeHtml(value: string): string {
 }
 
 function plainText(value: unknown, max: number, field: string): string {
-  if (typeof value !== 'string') throw new HtmlArtifactValidationError(field);
-  if (value.length > max * 8) throw new HtmlArtifactValidationError(field);
+  const artifactField = field === 'title' ? 'title' : 'description';
+  if (typeof value !== 'string') {
+    throw artifactValidationError(artifactField, 'type', 'plain-text-string', null, 'metadata');
+  }
+  if (value.length > max * 8) {
+    throw artifactValidationError(artifactField, 'size', 'plain-text-input-limit', value.length, 'metadata');
+  }
   const cleaned = stripControlCharacters(
     decodeEntities(
       sanitizeHtml(value, {
@@ -584,15 +608,34 @@ function plainText(value: unknown, max: number, field: string): string {
   )
     .replace(/\s+/g, ' ')
     .trim();
-  if (!cleaned || cleaned.length > max) throw new HtmlArtifactValidationError(field);
+  if (!cleaned) {
+    throw artifactValidationError(
+      artifactField,
+      'content',
+      'plain-text-nonempty-after-sanitization',
+      value.length,
+      'metadata'
+    );
+  }
+  if (cleaned.length > max) {
+    throw artifactValidationError(
+      artifactField,
+      'size',
+      'plain-text-output-limit',
+      value.length,
+      'metadata'
+    );
+  }
   return cleaned;
 }
 
 function sanitizeBody(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) {
-    throw new HtmlArtifactValidationError('body');
+    throw artifactValidationError('html', 'content', 'html-nonempty-string', typeof value === 'string' ? value.length : null, 'html');
   }
-  if (value.length > MAX_BODY_INPUT) throw new HtmlArtifactValidationError('body');
+  if (value.length > MAX_BODY_INPUT) {
+    throw artifactValidationError('html', 'size', 'html-input-limit', value.length, 'html');
+  }
   const body = sanitizeHtml(value, {
     allowedTags: HTML_TAGS,
     allowedAttributes: {
@@ -645,22 +688,38 @@ function sanitizeBody(value: unknown): string {
     },
   }).trim();
   if (!body || body.length > HTML_ARTIFACT_LIMITS.body) {
-    throw new HtmlArtifactValidationError('body');
+    throw artifactValidationError(
+      'html',
+      !body ? 'content' : 'size',
+      !body ? 'html-nonempty-after-sanitization' : 'html-output-limit',
+      value.length,
+      'html'
+    );
   }
   return body;
 }
 
 function sanitizeCss(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim()) throw new HtmlArtifactValidationError('css');
-  if (value.length > MAX_CSS_INPUT) throw new HtmlArtifactValidationError('css');
+  if (typeof value !== 'string' || !value.trim()) {
+    throw artifactValidationError('css', 'content', 'css-nonempty-string', typeof value === 'string' ? value.length : null, 'css');
+  }
+  if (value.length > MAX_CSS_INPUT) {
+    throw artifactValidationError('css', 'size', 'css-input-limit', value.length, 'css');
+  }
   if (/[<>\\]/.test(value) || hasControlCharacters(value)) {
-    throw new HtmlArtifactValidationError('css');
+    throw artifactValidationError(
+      'css',
+      'security',
+      /[<>\\]/.test(value) ? 'css-angle-or-backslash' : 'css-control-character',
+      value.length,
+      'css'
+    );
   }
   let root;
   try {
     root = postcss.parse(value);
   } catch {
-    throw new HtmlArtifactValidationError('css');
+    throw artifactValidationError('css', 'syntax', 'css-parse', value.length, 'css');
   }
   let rules = 0;
   let declarations = 0;
@@ -699,7 +758,7 @@ function sanitizeCss(value: unknown): string {
     if (!propertyAllowed || !isSafeCssValue(declaration.value)) declaration.remove();
   });
   if (rules > MAX_CSS_RULES || declarations > MAX_CSS_DECLARATIONS) {
-    throw new HtmlArtifactValidationError('css');
+    throw artifactValidationError('css', 'size', 'css-rule-or-declaration-limit', value.length, 'css');
   }
   const css = root.toString().trim();
   if (
@@ -708,7 +767,15 @@ function sanitizeCss(value: unknown): string {
     /[<>\\]/.test(css) ||
     FORBIDDEN_CSS_VALUE.test(css)
   ) {
-    throw new HtmlArtifactValidationError('css');
+    const rule = !css
+      ? 'css-nonempty-after-sanitization'
+      : css.length > HTML_ARTIFACT_LIMITS.css
+        ? 'css-output-limit'
+        : /[<>\\]/.test(css)
+          ? 'css-angle-or-backslash'
+          : 'css-forbidden-value';
+    const category = rule === 'css-forbidden-value' || rule === 'css-angle-or-backslash' ? 'security' : !css ? 'content' : 'size';
+    throw artifactValidationError('css', category, rule, value.length, 'css');
   }
   return css;
 }

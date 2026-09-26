@@ -5,7 +5,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { InvitationAiProviderError } from './ai-provider.types';
+import { InvitationAiProviderError, AiGenerationCancelledError } from './ai-provider.types';
 import { InvitationDesignsService } from './invitation-designs.service';
 
 const invitationId = '11111111-1111-4111-8111-111111111111';
@@ -666,5 +666,106 @@ describe('InvitationDesignsService', () => {
       )
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(providerCalls).toBe(0);
+  });
+
+  it('skips failure telemetry and persistence when the caller cancels mid-generation', async () => {
+    const writes: string[] = [];
+    const prisma = {
+      invitation: {
+        findFirst: async () => ({ id: invitationId, event, designs: [] }),
+      },
+      invitationDesign: {
+        updateMany: async () => {
+          writes.push('updateMany');
+          return { count: 0 };
+        },
+        create: async () => {
+          writes.push('create');
+          return designRecord;
+        },
+      },
+      aiUsage: {
+        create: async () => {
+          writes.push('aiUsage');
+          return { id: 'usage-x' };
+        },
+      },
+      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    };
+    let capturedSignal: AbortSignal | undefined;
+    const provider = {
+      generateHtml: async (input: { signal?: AbortSignal }) => {
+        capturedSignal = input.signal;
+        throw new AiGenerationCancelledError();
+      },
+    };
+    const controller = new AbortController();
+    const error = await new InvitationDesignsService(prisma as never, provider as never)
+      .generateHtmlWithAi(
+        'owner-1',
+        invitationId,
+        'Create a calm garden dinner invitation',
+        undefined,
+        controller.signal
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AiGenerationCancelledError);
+    expect((error as AiGenerationCancelledError).getStatus()).toBe(499);
+    expect(capturedSignal).toBe(controller.signal);
+    // No FAILED usage row, no design version: cancellation is not a failure.
+    expect(writes).toEqual([]);
+  });
+
+  it('refuses to persist when cancellation lands after the provider responds', async () => {
+    let created = 0;
+    const prisma = {
+      invitation: {
+        findFirst: async () => ({ id: invitationId, event, designs: [] }),
+      },
+      invitationDesign: {
+        updateMany: async () => ({ count: 0 }),
+        create: async () => {
+          created += 1;
+          return designRecord;
+        },
+      },
+      aiUsage: {
+        create: async () => ({ id: 'usage-x' }),
+      },
+      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    };
+    const provider = {
+      generateHtml: async () => ({
+        artifact: {
+          title: 'Garden Dinner',
+          description: 'An elegant evening among the garden.',
+          body: '<main><h1>Garden Dinner</h1></main>',
+          css: 'body{margin:0}',
+        },
+        project: {
+          name: 'Garden Dinner',
+          description: 'An elegant evening among the garden.',
+          files: [
+            { path: 'index.html', content: '<main><h1>Garden Dinner</h1></main>' },
+            { path: 'styles.css', content: 'body{margin:0}' },
+          ],
+        },
+        tokensUsed: 10,
+        provider: 'test',
+        model: 'test-model',
+      }),
+    };
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      new InvitationDesignsService(prisma as never, provider as never).generateHtmlWithAi(
+        'owner-1',
+        invitationId,
+        'Create a calm garden dinner invitation',
+        undefined,
+        controller.signal
+      )
+    ).rejects.toBeInstanceOf(AiGenerationCancelledError);
+    expect(created).toBe(0);
   });
 });

@@ -99,6 +99,16 @@ export class InvitationDesignsController {
     return this.designs.refineWithAi(user.sub, invitationId, dto);
   }
 
+  @Post('ai/refine-html')
+  @Throttle({ default: { ttl: 60000, limit: 12 } })
+  refineHtmlWithAi(
+    @CurrentUser() user: AuthPayload,
+    @Param('invitationId', new ParseUUIDPipe()) invitationId: string,
+    @Body() dto: RefineInvitationDesignDto
+  ) {
+    return this.designs.refineHtmlWithAi(user.sub, invitationId, dto.instruction);
+  }
+
   @Patch()
   update(
     @CurrentUser() user: AuthPayload,

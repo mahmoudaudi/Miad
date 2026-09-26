@@ -86,11 +86,18 @@ export type HtmlDesignArtifact = {
   css: string;
 };
 
+export type GeneratedWebsiteProject = {
+  name: string;
+  description: string;
+  files: Array<{ path: 'index.html' | 'styles.css'; content: string }>;
+};
+
 export type InvitationHtmlDesignRecord = {
   id: string;
   invitationId: string;
   version: number;
   artifact: HtmlDesignArtifact;
+  project: GeneratedWebsiteProject;
   sourceType: string;
   isActive: boolean;
   createdAt: string;
@@ -474,20 +481,17 @@ export const generateInvitationDesign = (
     }
   );
 
-export const generateHtmlInvitationDesign = (
-  invitationId: string,
-  input: { prompt: string; mode?: 'generate' | 'regenerate' }
-) =>
-  authenticatedApiClient<InvitationHtmlDesignRecord>(
-    `/invitations/${invitationId}/design/ai/generate-html`,
-    {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }
-  );
-
 export const refineInvitationDesign = (invitationId: string, instruction: string) =>
   authenticatedApiClient<InvitationDesignRecord>(`/invitations/${invitationId}/design/ai/refine`, {
     method: 'POST',
     body: JSON.stringify({ instruction }),
   });
+
+export const refineHtmlInvitationDesign = (invitationId: string, instruction: string) =>
+  authenticatedApiClient<InvitationHtmlDesignRecord>(
+    `/invitations/${invitationId}/design/ai/refine-html`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ instruction }),
+    }
+  );

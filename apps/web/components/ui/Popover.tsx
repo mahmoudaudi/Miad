@@ -48,6 +48,7 @@ export function Popover({
   return (
     <div
       ref={root}
+      data-open={open ? 'true' : 'false'}
       className={`relative min-w-0 ${className}`}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);

@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { resolveMediaElements, withHeroImage } from './ai-studio';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  analyzeAiStudio,
+  buildGenerationContext,
+  generateAiStudio,
+  resolveMediaElements,
+  withHeroImage,
+} from './ai-studio';
 import type { InvitationDesignSpecification } from './invitation-designs';
 
 const base: InvitationDesignSpecification = {
@@ -30,8 +36,15 @@ describe('withHeroImage', () => {
       ...base,
       elements: [
         {
-          id: 'pic-1', type: 'image', label: 'Pic', x: 0, y: 0,
-          width: 50, height: 50, fontSize: 16, color: '#241C18',
+          id: 'pic-1',
+          type: 'image',
+          label: 'Pic',
+          x: 0,
+          y: 0,
+          width: 50,
+          height: 50,
+          fontSize: 16,
+          color: '#241C18',
         },
       ],
     };
@@ -50,14 +63,28 @@ describe('resolveMediaElements', () => {
       ...base,
       elements: [
         {
-          id: 'pic-1', type: 'image', label: 'Pic',
+          id: 'pic-1',
+          type: 'image',
+          label: 'Pic',
           imageUrl: 'media://11111111-1111-4111-8111-111111111111',
-          x: 0, y: 0, width: 50, height: 50, fontSize: 16, color: '#241C18',
+          x: 0,
+          y: 0,
+          width: 50,
+          height: 50,
+          fontSize: 16,
+          color: '#241C18',
         },
         {
-          id: 'pic-2', type: 'image', label: 'Web',
+          id: 'pic-2',
+          type: 'image',
+          label: 'Web',
           imageUrl: 'https://example.com/b.jpg',
-          x: 0, y: 0, width: 50, height: 50, fontSize: 16, color: '#241C18',
+          x: 0,
+          y: 0,
+          width: 50,
+          height: 50,
+          fontSize: 16,
+          color: '#241C18',
         },
       ],
     };
@@ -73,13 +100,137 @@ describe('resolveMediaElements', () => {
       ...base,
       elements: [
         {
-          id: 'pic-1', type: 'image', label: 'Pic',
+          id: 'pic-1',
+          type: 'image',
+          label: 'Pic',
           imageUrl: 'media://22222222-2222-4222-8222-222222222222',
-          x: 0, y: 0, width: 50, height: 50, fontSize: 16, color: '#241C18',
+          x: 0,
+          y: 0,
+          width: 50,
+          height: 50,
+          fontSize: 16,
+          color: '#241C18',
         },
       ],
     };
     const next = resolveMediaElements(spec, {});
     expect(next.elements?.[0]?.imageUrl).toBe('media://22222222-2222-4222-8222-222222222222');
+  });
+});
+
+describe('generateAiStudio', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('forwards the caller abort signal and generation id with no invented timeout', async () => {
+    let seen: { url: unknown; init?: RequestInit } | undefined;
+    const payload = { event: {}, invitation: {}, design: null, aiError: null };
+    global.fetch = (async (url: unknown, init?: RequestInit) => {
+      seen = { url, init };
+      return new Response(JSON.stringify(payload), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const controller = new AbortController();
+    const generationId = '11111111-1111-4111-8111-111111111111';
+    await expect(
+      generateAiStudio('A garden birthday for Lina', generationId, controller.signal)
+    ).resolves.toEqual(payload);
+    expect(seen?.init?.method).toBe('POST');
+    expect(seen?.init?.signal).toBe(controller.signal);
+    expect(JSON.parse(String(seen?.init?.body))).toEqual({
+      prompt: 'A garden birthday for Lina',
+      generationId,
+    });
+  });
+});
+
+describe('analyzeAiStudio', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('posts the prompt, brief, and answers to the analysis endpoint with an abort signal', async () => {
+    const analysis = {
+      status: 'QUESTION',
+      question: {
+        id: 'atmosphere',
+        text: 'What kind of atmosphere would you like for the dinner?',
+        type: 'single_select',
+        options: [
+          { label: 'Modern', value: 'Modern' },
+          { label: 'Luxury', value: 'Luxury' },
+        ],
+        allowOther: true,
+      },
+      collectedData: { eventType: 'Dinner' },
+    };
+    let seen: { url: unknown; init?: RequestInit } | undefined;
+    global.fetch = (async (url: unknown, init?: RequestInit) => {
+      seen = { url, init };
+      return new Response(JSON.stringify(analysis), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const controller = new AbortController();
+
+    await expect(
+      analyzeAiStudio({
+        prompt: 'Tech Founder Dinner',
+        collectedData: { eventType: 'Dinner' },
+        answers: [{ questionId: 'atmosphere', value: 'Modern' }],
+        signal: controller.signal,
+      })
+    ).resolves.toEqual(analysis);
+
+    expect(String(seen?.url)).toContain('/ai/analyze');
+    expect(seen?.init?.method).toBe('POST');
+    expect(seen?.init?.signal).toBe(controller.signal);
+    expect(JSON.parse(String(seen?.init?.body))).toEqual({
+      prompt: 'Tech Founder Dinner',
+      collectedData: { eventType: 'Dinner' },
+      answers: [{ questionId: 'atmosphere', value: 'Modern' }],
+    });
+  });
+});
+
+describe('buildGenerationContext', () => {
+  it('keeps the original prompt untouched when nothing was collected', () => {
+    expect(buildGenerationContext('Tech Founder Dinner', null)).toBe('Tech Founder Dinner');
+    expect(buildGenerationContext('Tech Founder Dinner', {})).toBe('Tech Founder Dinner');
+  });
+
+  it('merges the brief into a single context for the existing generator', () => {
+    const context = buildGenerationContext('Tech Founder Dinner', {
+      eventType: 'Corporate Dinner',
+      date: '2026-10-15',
+      time: '19:00',
+      location: 'Beirut',
+      style: 'Modern',
+      tone: 'Professional',
+    });
+    expect(context).toContain('Original request:\nTech Founder Dinner');
+    expect(context).toContain('Event type: Corporate Dinner');
+    expect(context).toContain('Date: October 15, 2026');
+    expect(context).toContain('Time: 19:00');
+    expect(context).toContain('Location: Beirut');
+    expect(context).toContain('Style: Modern');
+    expect(context).toContain('Tone: Professional');
+  });
+
+  it('renders list and boolean brief values readably', () => {
+    const context = buildGenerationContext('A dinner', {
+      names: ['Ahmad', 'Sara'],
+      colors: ['Navy', 'Gold'],
+      rsvpRequired: true,
+    });
+    expect(context).toContain('Names: Ahmad, Sara');
+    expect(context).toContain('Colors: Navy, Gold');
+    expect(context).toContain('RSVP required: Yes');
   });
 });
