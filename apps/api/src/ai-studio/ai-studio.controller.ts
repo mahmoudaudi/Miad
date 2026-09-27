@@ -114,7 +114,34 @@ export class AiStudioController {
 
   @Post('refine')
   @Throttle({ default: { ttl: 60000, limit: 12 } })
-  refine(@CurrentUser() user: AuthPayload, @Body() dto: RefineAiStudioDto) {
-    return this.studio.refineGeneratedWebsite(user.sub, dto.invitationId, dto.prompt);
+  async refine(
+    @CurrentUser() user: AuthPayload,
+    @Body() dto: RefineAiStudioDto,
+    @Req() req: Request
+  ) {
+    const controller = new AbortController();
+    const res = req.res;
+    const onClose = () => {
+      if (!res || !res.writableEnded) controller.abort();
+    };
+    res?.on('close', onClose);
+    try {
+      return await this.studio.refineGeneratedWebsite(
+        user.sub,
+        dto.invitationId,
+        dto.prompt,
+        controller.signal
+      );
+    } catch (error) {
+      if (
+        error instanceof AiGenerationCancelledError &&
+        (!res || res.writableEnded || res.destroyed)
+      ) {
+        return undefined;
+      }
+      throw error;
+    } finally {
+      res?.removeListener('close', onClose);
+    }
   }
 }

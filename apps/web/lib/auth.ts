@@ -105,8 +105,17 @@ export async function logout(): Promise<{ status: 'ok' }> {
   }
 }
 
+let refreshInFlight: Promise<AuthUser> | null = null;
+
 export function refreshSession(): Promise<AuthUser> {
-  return authRequest<AuthUser>('/auth/refresh', { method: 'POST' });
+  // The API rotates refresh tokens atomically, so concurrent callers must
+  // share one refresh request instead of racing to consume the same cookie.
+  if (!refreshInFlight) {
+    refreshInFlight = authRequest<AuthUser>('/auth/refresh', { method: 'POST' }).finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
 }
 
 /** Returns the current user, or null when not authenticated. */

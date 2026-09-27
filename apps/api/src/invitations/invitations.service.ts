@@ -8,6 +8,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { MediaStorageService } from '../media/media-storage.service';
 import { storageKeyFromUrl } from '../media/media-validation';
+import { InvitationDesignsService } from '../invitation-designs/invitation-designs.service';
+import { HtmlArtifactValidationError } from '../invitation-designs/html-artifact';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateInvitationDto } from './dto/create-invitation.dto';
 import type { UpdateInvitationDto } from './dto/update-invitation.dto';
@@ -21,6 +23,7 @@ const invitationSelect = {
   createdAt: true,
   updatedAt: true,
   event: { select: { id: true, title: true, eventDate: true } },
+  designs: { where: { isActive: true }, take: 1, select: { id: true } },
 } satisfies Prisma.InvitationSelect;
 
 type InvitationResult = Prisma.InvitationGetPayload<{ select: typeof invitationSelect }>;
@@ -33,6 +36,7 @@ export type InvitationResponse = {
   publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  hasDesign: boolean;
   event: { id: string; title: string; eventDate: string };
 };
 
@@ -40,6 +44,7 @@ export type InvitationResponse = {
 export class InvitationsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly designs: InvitationDesignsService,
     @Optional() private readonly storage?: MediaStorageService
   ) {}
 
@@ -108,23 +113,39 @@ export class InvitationsService {
         id: true,
         status: true,
         publishedAt: true,
+        publishedDesignVersion: true,
         designs: {
           where: { isActive: true },
+          orderBy: { version: 'desc' },
           take: 1,
-          select: { id: true },
+          select: { version: true },
         },
       },
     });
     if (!invitation) throw new NotFoundException('Invitation not found.');
-    if (published && invitation.designs.length === 0) {
+    const activeDesignVersion = invitation.designs[0]?.version ?? null;
+    if (published && activeDesignVersion === null) {
       throw new BadRequestException('Save an invitation design before publishing.');
+    }
+    if (published) {
+      try {
+        // Reuse the exact validation and sanitization path used by preview/render.
+        await this.designs.findOwnedRenderable(userId, id);
+      } catch (error) {
+        if (error instanceof NotFoundException || error instanceof HtmlArtifactValidationError) {
+          throw new BadRequestException('Save a valid invitation design before publishing.');
+        }
+        throw error;
+      }
     }
 
     const nextStatus = published ? 'PUBLISHED' : 'DRAFT';
     const publishedAt = published ? (invitation.publishedAt ?? new Date()) : null;
+    const publishedDesignVersion = published ? activeDesignVersion : null;
     if (
       invitation.status === nextStatus &&
-      invitation.publishedAt?.getTime() === publishedAt?.getTime()
+      invitation.publishedAt?.getTime() === publishedAt?.getTime() &&
+      invitation.publishedDesignVersion === publishedDesignVersion
     ) {
       return this.findOne(userId, id);
     }
@@ -132,7 +153,7 @@ export class InvitationsService {
     try {
       const updated = await this.prisma.invitation.update({
         where: { id: invitation.id },
-        data: { status: nextStatus, publishedAt },
+        data: { status: nextStatus, publishedAt, publishedDesignVersion },
         select: invitationSelect,
       });
       return this.toResponse(updated);
@@ -217,6 +238,7 @@ export class InvitationsService {
       publishedAt: invitation.publishedAt?.toISOString() ?? null,
       createdAt: invitation.createdAt.toISOString(),
       updatedAt: invitation.updatedAt.toISOString(),
+      hasDesign: Boolean(invitation.designs?.length),
       event: {
         id: invitation.event.id,
         title: invitation.event.title,

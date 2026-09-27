@@ -251,11 +251,13 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
     prompt: string;
     event: InvitationHtmlAiGenerateInput['event'];
     project: GeneratedWebsiteProject;
+    signal?: AbortSignal;
   }): Promise<InvitationHtmlAiResult> {
     return this.generateWebsiteProject({
       prompt: input.prompt,
       event: input.event,
       currentProject: input.project,
+      signal: input.signal,
     });
   }
 

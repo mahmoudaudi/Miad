@@ -8,6 +8,7 @@ export type InvitationRecord = {
   publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  hasDesign: boolean;
   event: { id: string; title: string; eventDate: string };
 };
 

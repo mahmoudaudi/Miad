@@ -23,35 +23,104 @@ const event = {
   createdAt: '',
   updatedAt: '',
 };
+const invitation = {
+  id: 'invitation-1',
+  eventId: 'event-1',
+  slug: 'garden-dinner',
+  status: 'PUBLISHED',
+  publishedAt: '2026-09-22T00:00:00.000Z',
+  createdAt: '2026-09-20T00:00:00.000Z',
+  updatedAt: '2026-09-22T00:00:00.000Z',
+  hasDesign: true,
+  event: { id: 'event-1', title: 'Garden Dinner', eventDate: '2026-10-12' },
+};
 const noop = () => undefined;
 
 describe('events views', () => {
   it('renders list loading, error, empty, and data states', () => {
     expect(
       renderToStaticMarkup(
-        <EventsListView state={{ status: 'loading' }} onRetry={noop} onDelete={noop} />
+        <EventsListView
+          state={{ status: 'loading' }}
+          projects={{ status: 'loading' }}
+          onRetry={noop}
+          onRetryProjects={noop}
+          onDelete={noop}
+        />
       )
     ).toContain('aria-busy="true"');
     expect(
       renderToStaticMarkup(
         <EventsListView
           state={{ status: 'error', message: 'Offline' }}
+          projects={{ status: 'ready', invitations: [] }}
           onRetry={noop}
+          onRetryProjects={noop}
           onDelete={noop}
         />
       )
     ).toContain('Offline');
     expect(
       renderToStaticMarkup(
-        <EventsListView state={{ status: 'ready', events: [] }} onRetry={noop} onDelete={noop} />
+        <EventsListView
+          state={{ status: 'ready', events: [] }}
+          projects={{ status: 'ready', invitations: [] }}
+          onRetry={noop}
+          onRetryProjects={noop}
+          onDelete={noop}
+        />
       )
     ).toContain('No invitations yet');
     const data = renderToStaticMarkup(
-      <EventsListView state={{ status: 'ready', events: [event] }} onRetry={noop} onDelete={noop} />
+      <EventsListView
+        state={{ status: 'ready', events: [event] }}
+        projects={{ status: 'ready', invitations: [invitation] }}
+        onRetry={noop}
+        onRetryProjects={noop}
+        onDelete={noop}
+      />
     );
     expect(data).toContain('Garden Dinner');
+    expect(data).toContain('Recent Projects');
+    expect(data).toContain('/api/designs/invitation-1/render');
+    expect(data).toContain('Published');
+    expect(data).toContain('/dashboard/invitations/invitation-1/editor');
     expect(data).toContain('/dashboard/events/event-1/edit');
     expect(data).toContain('Delete');
+  });
+
+  it('shows recent-project loading, empty, and retryable error states', () => {
+    const loading = renderToStaticMarkup(
+      <EventsListView
+        state={{ status: 'ready', events: [] }}
+        projects={{ status: 'loading' }}
+        onRetry={noop}
+        onRetryProjects={noop}
+        onDelete={noop}
+      />
+    );
+    expect(loading).toContain('Loading recent projects');
+    const empty = renderToStaticMarkup(
+      <EventsListView
+        state={{ status: 'ready', events: [] }}
+        projects={{ status: 'ready', invitations: [] }}
+        onRetry={noop}
+        onRetryProjects={noop}
+        onDelete={noop}
+      />
+    );
+    expect(empty).toContain('No projects yet');
+    const error = renderToStaticMarkup(
+      <EventsListView
+        state={{ status: 'ready', events: [] }}
+        projects={{ status: 'error', message: 'Offline' }}
+        onRetry={noop}
+        onRetryProjects={noop}
+        onDelete={noop}
+      />
+    );
+    expect(error).toContain('We could not load recent projects');
+    expect(error).toContain('Try again');
   });
 
   it('renders details, not-found, and error states with only valid actions', () => {

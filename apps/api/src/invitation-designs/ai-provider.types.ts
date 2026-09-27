@@ -102,6 +102,7 @@ export interface InvitationAiProvider {
     prompt: string;
     event: InvitationAiEventContext;
     project: GeneratedWebsiteProject;
+    signal?: AbortSignal;
   }): Promise<InvitationHtmlAiResult>;
   extractEventDetails(prompt: string): Promise<InvitationAiEventDetails>;
   /** Returns the raw model analysis; the caller validates it strictly. */

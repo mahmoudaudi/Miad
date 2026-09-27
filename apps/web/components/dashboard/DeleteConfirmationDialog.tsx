@@ -35,7 +35,7 @@ export function DeleteConfirmationDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-coal/45 sm:items-center sm:px-4"
+      className="animate-fade-in fixed inset-0 z-50 flex items-end justify-center bg-coal/45 sm:items-center sm:px-4"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onCancel();
@@ -48,7 +48,7 @@ export function DeleteConfirmationDialog({
         aria-modal="true"
         aria-labelledby="delete-confirmation-title"
         aria-describedby="delete-confirmation-description"
-        className="max-h-[calc(100dvh-1rem)] w-full max-w-md overflow-y-auto rounded-t-3xl border border-line bg-surface p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-lift sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl sm:p-8"
+        className="animate-modal-pop max-h-[calc(100dvh-1rem)] w-full max-w-md overflow-y-auto rounded-t-3xl border border-line bg-surface p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-lift sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl sm:p-8"
       >
         <p className="text-label-sm uppercase tracking-[0.14em] text-error">Permanent action</p>
         <h2 id="delete-confirmation-title" className="mt-2 font-display text-headline-md text-ink">
@@ -60,7 +60,7 @@ export function DeleteConfirmationDialog({
         {error && (
           <p
             role="alert"
-            className="mt-4 rounded-xl border border-error/20 p-3 text-body-sm text-error"
+            className="miad-feedback-enter mt-4 rounded-xl border border-error/20 p-3 text-body-sm text-error"
           >
             {error}
           </p>

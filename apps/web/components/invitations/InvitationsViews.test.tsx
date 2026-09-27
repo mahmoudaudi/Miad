@@ -14,6 +14,7 @@ const invitation = {
   publishedAt: null,
   createdAt: '2026-09-20T00:00:00.000Z',
   updatedAt: '2026-09-20T00:00:00.000Z',
+  hasDesign: false,
   event: { id: 'event-1', title: 'Garden Dinner', eventDate: '2026-11-14' },
 };
 const noop = () => undefined;
@@ -113,7 +114,7 @@ describe('invitation views', () => {
     expect(html).toContain('Delete');
     expect(html).toContain('Publish');
     expect(html).not.toContain('/invite/garden-dinner');
-    expect(html).not.toMatch(/Customize|Share|RSVP|AI Generate/);
+    expect(html).not.toMatch(/Customize|Copy link|Share|RSVP|AI Generate/);
   });
 
   it('renders real published state, public URL, loading, success, and error feedback', () => {
@@ -135,6 +136,9 @@ describe('invitation views', () => {
     );
     expect(html).toContain('Unpublishing…');
     expect(html).toContain('/invite/garden-dinner');
+    expect(html).toContain('Copy link');
+    expect(html).toContain('Share');
+    expect(html).toContain('Open invitation');
     expect(html).toContain('Publication failed');
     expect(html).toContain('Invitation published.');
     expect(html).toContain('role="alert"');

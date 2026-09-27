@@ -14,7 +14,9 @@ const record = {
     title: 'Garden Dinner',
     eventDate: new Date('2026-10-12T00:00:00.000Z'),
   },
+  designs: [{ id: '33333333-3333-4333-8333-333333333333' }],
 };
+const validDesigns = { findOwnedRenderable: async () => ({}) };
 
 describe('InvitationsService', () => {
   it('lists invitations with one owner-scoped query and selected event fields', async () => {
@@ -27,11 +29,15 @@ describe('InvitationsService', () => {
         },
       },
     };
-    const result = await new InvitationsService(prisma as never).findAll('owner-1', record.eventId);
+    const result = await new InvitationsService(prisma as never, validDesigns as never).findAll(
+      'owner-1',
+      record.eventId
+    );
     expect(query).toMatchObject({
       where: { event: { userId: 'owner-1' }, eventId: record.eventId },
+      select: { designs: { where: { isActive: true }, select: { id: true } } },
     });
-    expect(result[0]).toMatchObject({ slug: 'garden-dinner', status: 'DRAFT' });
+    expect(result[0]).toMatchObject({ slug: 'garden-dinner', status: 'DRAFT', hasDesign: true });
     expect(result[0]?.event).not.toHaveProperty('userId');
   });
 
@@ -46,7 +52,7 @@ describe('InvitationsService', () => {
         },
       },
     };
-    await new InvitationsService(prisma as never).create('owner-1', {
+    await new InvitationsService(prisma as never, validDesigns as never).create('owner-1', {
       eventId: record.eventId,
       slug: record.slug,
     });
@@ -59,67 +65,128 @@ describe('InvitationsService', () => {
   });
 
   it('cannot create inside a missing or non-owned event', async () => {
-    const service = new InvitationsService({ event: { findFirst: async () => null } } as never);
+    const service = new InvitationsService(
+      { event: { findFirst: async () => null } } as never,
+      validDesigns as never
+    );
     await expect(
       service.create('owner-2', { eventId: record.eventId, slug: record.slug })
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('returns a safe not-found response for a non-owned invitation', async () => {
-    const service = new InvitationsService({
-      invitation: { findFirst: async () => null },
-    } as never);
+    const service = new InvitationsService(
+      {
+        invitation: { findFirst: async () => null },
+      } as never,
+      validDesigns as never
+    );
     await expect(service.findOne('owner-2', record.id)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('publishes and unpublishes an owned invitation with an active design', async () => {
     const updates: unknown[] = [];
+    const validateDesign = jest.fn(async () => ({}));
     let currentStatus = 'DRAFT';
     let currentPublishedAt: Date | null = null;
+    let currentPublishedDesignVersion: number | null = null;
     const prisma = {
       invitation: {
         findFirst: async () => ({
           id: record.id,
           status: currentStatus,
           publishedAt: currentPublishedAt,
-          designs: [{ id: 'design-1' }],
+          publishedDesignVersion: currentPublishedDesignVersion,
+          designs: [{ version: 3 }],
         }),
         update: async (args: { data: unknown }) => {
           updates.push(args.data);
-          const data = args.data as { status: string; publishedAt: Date | null };
+          const data = args.data as {
+            status: string;
+            publishedAt: Date | null;
+            publishedDesignVersion: number | null;
+          };
           currentStatus = data.status;
           currentPublishedAt = data.publishedAt;
+          currentPublishedDesignVersion = data.publishedDesignVersion;
           return { ...record, status: data.status, publishedAt: data.publishedAt };
         },
       },
     };
-    const service = new InvitationsService(prisma as never);
+    const service = new InvitationsService(
+      prisma as never,
+      { findOwnedRenderable: validateDesign } as never
+    );
     const published = await service.updatePublication('owner-1', record.id, true);
     const unpublished = await service.updatePublication('owner-1', record.id, false);
-    expect(updates[0]).toMatchObject({ status: 'PUBLISHED', publishedAt: expect.any(Date) });
-    expect(updates[1]).toEqual({ status: 'DRAFT', publishedAt: null });
+    expect(updates[0]).toMatchObject({
+      status: 'PUBLISHED',
+      publishedAt: expect.any(Date),
+      publishedDesignVersion: 3,
+    });
+    expect(updates[1]).toEqual({
+      status: 'DRAFT',
+      publishedAt: null,
+      publishedDesignVersion: null,
+    });
     expect(published.status).toBe('PUBLISHED');
+    expect(published.slug).toBe(record.slug);
+    expect(validateDesign).toHaveBeenCalledTimes(1);
     expect(unpublished).toMatchObject({ status: 'DRAFT', publishedAt: null });
   });
 
+  it('refuses to publish a design rejected by the safe render validator', async () => {
+    const update = jest.fn();
+    const service = new InvitationsService(
+      {
+        invitation: {
+          findFirst: async () => ({
+            id: record.id,
+            status: 'DRAFT',
+            publishedAt: null,
+            publishedDesignVersion: null,
+            designs: [{ version: 1 }],
+          }),
+          update,
+        },
+      } as never,
+      {
+        findOwnedRenderable: async () => {
+          throw new BadRequestException('Invalid design');
+        },
+      } as never
+    );
+    await expect(service.updatePublication('owner-1', record.id, true)).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('requires ownership and an active design before publishing', async () => {
-    const missing = new InvitationsService({
-      invitation: { findFirst: async () => null },
-    } as never);
+    const missing = new InvitationsService(
+      {
+        invitation: { findFirst: async () => null },
+      } as never,
+      validDesigns as never
+    );
     await expect(missing.updatePublication('owner-2', record.id, true)).rejects.toBeInstanceOf(
       NotFoundException
     );
 
-    const undesigned = new InvitationsService({
-      invitation: {
-        findFirst: async () => ({
-          id: record.id,
-          status: 'DRAFT',
-          publishedAt: null,
-          designs: [],
-        }),
-      },
-    } as never);
+    const undesigned = new InvitationsService(
+      {
+        invitation: {
+          findFirst: async () => ({
+            id: record.id,
+            status: 'DRAFT',
+            publishedAt: null,
+            publishedDesignVersion: null,
+            designs: [],
+          }),
+        },
+      } as never,
+      validDesigns as never
+    );
     await expect(undesigned.updatePublication('owner-1', record.id, true)).rejects.toBeInstanceOf(
       BadRequestException
     );
@@ -153,7 +220,11 @@ describe('InvitationsService', () => {
       $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
     };
     const storage = { removeObject: async (key: unknown) => void removedObjects.push(key) };
-    const service = new InvitationsService(prisma as never, storage as never);
+    const service = new InvitationsService(
+      prisma as never,
+      validDesigns as never,
+      storage as never
+    );
     await service.update('owner-1', record.id, { slug: 'updated-slug' });
     await service.remove('owner-1', record.id);
     expect(whereClauses).toEqual([
@@ -190,7 +261,10 @@ describe('InvitationsService', () => {
     const storage = {
       removeObject: async (key: unknown) => void removed.push(key),
     };
-    await new InvitationsService(prisma as never, storage as never).remove('owner-1', record.id);
+    await new InvitationsService(prisma as never, validDesigns as never, storage as never).remove(
+      'owner-1',
+      record.id
+    );
     expect(removed).toEqual(['owner-1/inv-1/good']);
   });
 
@@ -220,7 +294,10 @@ describe('InvitationsService', () => {
         throw new Error('storage down');
       },
     };
-    await new InvitationsService(prisma as never, storage as never).remove('owner-1', record.id);
+    await new InvitationsService(prisma as never, validDesigns as never, storage as never).remove(
+      'owner-1',
+      record.id
+    );
     expect(deleted).toBe(true);
   });
 
@@ -240,7 +317,7 @@ describe('InvitationsService', () => {
       invitationDesign: { deleteMany: write },
     };
     await expect(
-      new InvitationsService(prisma as never).remove('owner-2', record.id)
+      new InvitationsService(prisma as never, validDesigns as never).remove('owner-2', record.id)
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(writes).toBe(0);
   });

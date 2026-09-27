@@ -24,10 +24,7 @@ import {
   AiGenerationProgressService,
   type AiGenerationStage,
 } from './ai-generation-progress.service';
-import {
-  parseSmartAnalysis,
-  type SmartAnalysis,
-} from './smart-question.types';
+import { parseSmartAnalysis, type SmartAnalysis } from './smart-question.types';
 import type { AnalyzeAiStudioDto } from './dto/analyze-ai-studio.dto';
 
 export type AiStudioEventResponse = {
@@ -241,9 +238,10 @@ export class AiStudioService {
   async refineGeneratedWebsite(
     userId: string,
     invitationId: string,
-    prompt: string
+    prompt: string,
+    signal?: AbortSignal
   ): Promise<AiStudioRefineResponse> {
-    return this.designs.refineHtmlWithAi(userId, invitationId, prompt);
+    return this.designs.refineHtmlWithAi(userId, invitationId, prompt, signal);
   }
 
   /**

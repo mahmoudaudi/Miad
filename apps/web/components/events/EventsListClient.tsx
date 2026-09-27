@@ -4,12 +4,18 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError } from '@/lib/api-client';
 import { deleteEvent, EventRecord, listEvents } from '@/lib/events';
+import { InvitationRecord, listInvitations } from '@/lib/invitations';
 import { DeleteEventDialog } from './DeleteEventDialog';
 import { EventsListState, EventsListView } from './EventsListView';
 
 export function EventsListClient() {
   const router = useRouter();
   const [state, setState] = useState<EventsListState>({ status: 'loading' });
+  const [projects, setProjects] = useState<
+    | { status: 'loading' }
+    | { status: 'error'; message: string }
+    | { status: 'ready'; invitations: InvitationRecord[] }
+  >({ status: 'loading' });
   const [selected, setSelected] = useState<EventRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -17,14 +23,29 @@ export function EventsListClient() {
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
-    try {
-      setState({ status: 'ready', events: await listEvents() });
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
+    setProjects({ status: 'loading' });
+    const [eventsResult, invitationsResult] = await Promise.allSettled([
+      listEvents(),
+      listInvitations(),
+    ]);
+    if (eventsResult.status === 'fulfilled') {
+      setState({ status: 'ready', events: eventsResult.value });
+    } else {
+      if (eventsResult.reason instanceof ApiError && eventsResult.reason.status === 401) {
         router.replace('/login?next=%2Fdashboard%2Fevents');
         return;
       }
       setState({ status: 'error', message: 'Check your connection and try again.' });
+    }
+    if (invitationsResult.status === 'fulfilled') {
+      setProjects({ status: 'ready', invitations: invitationsResult.value });
+    } else if (
+      invitationsResult.reason instanceof ApiError &&
+      invitationsResult.reason.status === 401
+    ) {
+      router.replace('/login?next=%2Fdashboard%2Fevents');
+    } else {
+      setProjects({ status: 'error', message: 'Check your connection and try again.' });
     }
   }, [router]);
 
@@ -64,8 +85,10 @@ export function EventsListClient() {
     <>
       <EventsListView
         state={state}
+        projects={projects}
         successMessage={success}
         onRetry={() => void load()}
+        onRetryProjects={() => void load()}
         onDelete={(event) => {
           setSuccess(null);
           setDeleteError(null);

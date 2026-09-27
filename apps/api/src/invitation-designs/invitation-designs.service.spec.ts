@@ -92,9 +92,19 @@ describe('InvitationDesignsService', () => {
         findFirst: async (args: unknown) => {
           query = args;
           return {
+            id: invitationId,
+            publishedDesignVersion: 1,
             event,
-            designs: [{ designSpecification: specification }],
           };
+        },
+      },
+      invitationDesign: {
+        findFirst: async (args: unknown) => {
+          expect(args).toMatchObject({
+            where: { invitationId, version: 1 },
+            select: { designSpecification: true },
+          });
+          return { designSpecification: specification };
         },
       },
     } as never);
@@ -106,8 +116,9 @@ describe('InvitationDesignsService', () => {
         publishedAt: { not: null },
       },
       select: {
+        id: true,
+        publishedDesignVersion: true,
         event: { select: { title: true } },
-        designs: { where: { isActive: true }, take: 1 },
       },
     });
     expect(result).toHaveProperty('designSpecification');
@@ -459,6 +470,183 @@ describe('InvitationDesignsService', () => {
     expect(result).not.toHaveProperty('designSpecification');
   });
 
+  it('refines a saved HTML design into the next validated version and preserves the previous row', async () => {
+    const original = {
+      format: 'html',
+      version: 1,
+      title: 'Garden Dinner',
+      description: 'A calm evening',
+      body: '<main><h1>Garden Dinner</h1></main>',
+      css: 'body{color:#123}',
+    };
+    const rows: Array<{ version: number; isActive: boolean; designSpecification: unknown }> = [
+      { version: 4, isActive: true, designSpecification: original },
+    ];
+    let providerInput: unknown;
+    const prisma = {
+      invitation: {
+        findFirst: async () => ({
+          id: invitationId,
+          event,
+          designs: [{ ...designRecord, version: 4, designSpecification: original }],
+        }),
+      },
+      invitationDesign: {
+        updateMany: async () => {
+          for (const row of rows) row.isActive = false;
+          return { count: 1 };
+        },
+        create: async (args: { data: Record<string, unknown> }) => {
+          const row = {
+            version: args.data.version as number,
+            isActive: args.data.isActive as boolean,
+            designSpecification: args.data.designSpecification,
+            sourceType: args.data.sourceType as string,
+          };
+          rows.push(row);
+          return { ...designRecord, id: 'design-5', ...row };
+        },
+      },
+      aiUsage: { create: async () => ({ id: 'usage-1' }) },
+      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    };
+    const provider = {
+      refineHtml: async (input: unknown) => {
+        providerInput = input;
+        return {
+          artifact: {
+            title: 'Emerald Garden Dinner',
+            description: 'A calm evening',
+            body: '<main><h1>Emerald Garden Dinner</h1><script>alert(1)</script></main>',
+            css: 'body{color:#123} .card{background:url(https://tracker.example/pixel)}',
+          },
+          tokensUsed: 12,
+          provider: 'test',
+          model: 'test-model',
+          project: { name: '', description: '', files: [] },
+        };
+      },
+    };
+
+    const result = await new InvitationDesignsService(
+      prisma as never,
+      provider as never
+    ).refineHtmlWithAi('owner-1', invitationId, 'Make the background emerald green.');
+
+    expect(providerInput).toMatchObject({
+      prompt: 'Make the background emerald green.',
+      event: { title: 'Garden Dinner', eventDate: '2026-12-12' },
+      project: { name: 'Garden Dinner' },
+    });
+    expect(result).toMatchObject({
+      version: 5,
+      sourceType: 'AI_EDIT',
+      artifact: { title: 'Emerald Garden Dinner' },
+    });
+    expect(result.artifact.body).not.toContain('<script');
+    expect(result.artifact.css).not.toContain('url(');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ version: 4, isActive: false, designSpecification: original });
+    expect(rows[1]).toMatchObject({ version: 5, isActive: true });
+  });
+
+  it('rejects empty edits and leaves the existing version intact when refinement fails', async () => {
+    const original = {
+      format: 'html',
+      version: 1,
+      title: 'Garden Dinner',
+      description: 'A calm evening',
+      body: '<main><h1>Garden Dinner</h1></main>',
+      css: 'body{color:#123}',
+    };
+    const writes = jest.fn();
+    const usage = jest.fn(async () => ({ id: 'usage-failed' }));
+    const prisma = {
+      invitation: {
+        findFirst: async () => ({
+          id: invitationId,
+          event,
+          designs: [{ ...designRecord, designSpecification: original }],
+        }),
+      },
+      invitationDesign: { updateMany: writes, create: writes },
+      aiUsage: { create: usage },
+    };
+    const provider = {
+      refineHtml: async () => {
+        throw new InvitationAiProviderError('provider timed out', 'timeout');
+      },
+    };
+    const service = new InvitationDesignsService(prisma as never, provider as never);
+
+    await expect(service.refineHtmlWithAi('owner-1', invitationId, '  ')).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    expect(usage).not.toHaveBeenCalled();
+    await expect(
+      service.refineHtmlWithAi('owner-1', invitationId, 'Make the colors warmer.')
+    ).rejects.toMatchObject({
+      status: 502,
+      message: 'AI generation timed out. Please try again.',
+    });
+    expect(writes).not.toHaveBeenCalled();
+    expect(usage).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED' }) })
+    );
+  });
+
+  it('does not persist or log a failed AI version when refinement is cancelled', async () => {
+    const controller = new AbortController();
+    const original = {
+      format: 'html',
+      version: 1,
+      title: 'Garden Dinner',
+      description: 'A calm evening',
+      body: '<main><h1>Garden Dinner</h1></main>',
+      css: 'body{color:#123}',
+    };
+    const writes = jest.fn();
+    const usage = jest.fn(async () => ({ id: 'usage-failed' }));
+    const prisma = {
+      invitation: {
+        findFirst: async () => ({
+          id: invitationId,
+          event,
+          designs: [{ ...designRecord, designSpecification: original }],
+        }),
+      },
+      invitationDesign: { updateMany: writes, create: writes },
+      aiUsage: { create: usage },
+    };
+    const provider = {
+      refineHtml: async () => {
+        controller.abort();
+        return {
+          artifact: {
+            title: 'Updated Garden Dinner',
+            description: 'A calm evening',
+            body: '<main><h1>Updated Garden Dinner</h1></main>',
+            css: 'body{color:#123}',
+          },
+          tokensUsed: 12,
+          provider: 'test',
+          model: 'test-model',
+          project: { name: '', description: '', files: [] },
+        };
+      },
+    };
+    await expect(
+      new InvitationDesignsService(prisma as never, provider as never).refineHtmlWithAi(
+        'owner-1',
+        invitationId,
+        'Make the colors warmer.',
+        controller.signal
+      )
+    ).rejects.toBeInstanceOf(AiGenerationCancelledError);
+    expect(writes).not.toHaveBeenCalled();
+    expect(usage).not.toHaveBeenCalled();
+  });
+
   it('keeps HTML artifacts out of the legacy public JSON body and exposes render metadata', async () => {
     const stored = {
       format: 'html',
@@ -470,8 +658,13 @@ describe('InvitationDesignsService', () => {
     };
     const service = new InvitationDesignsService({
       invitation: {
-        findFirst: async () => ({ event, designs: [{ designSpecification: stored }] }),
+        findFirst: async () => ({
+          id: invitationId,
+          publishedDesignVersion: 1,
+          event,
+        }),
       },
+      invitationDesign: { findFirst: async () => ({ designSpecification: stored }) },
     } as never);
 
     await expect(service.findPublished('garden-dinner')).resolves.toEqual({

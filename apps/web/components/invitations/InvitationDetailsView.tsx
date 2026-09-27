@@ -65,7 +65,7 @@ export function InvitationDetailsView({
     return (
       <main className="mx-auto max-w-2xl px-4 py-16 text-center sm:px-6">
         <h1 className="font-display text-headline-md text-ink">Invitation unavailable</h1>
-        <p role="alert" className="mt-3 text-body-md text-muted">
+        <p role="alert" className="miad-feedback-enter mt-3 text-body-md text-muted">
           {state.message}
         </p>
         <button
@@ -80,6 +80,7 @@ export function InvitationDetailsView({
 
   const invitation = state.invitation;
   const isPublished = invitation.status === 'PUBLISHED' && Boolean(invitation.publishedAt);
+  const hasPublicUrl = isPublished && invitation.slug.trim().length > 0;
   const publicPath = `/invite/${invitation.slug}`;
   const publicUrl = `${publicOrigin}${publicPath}`;
   return (
@@ -160,12 +161,14 @@ export function InvitationDetailsView({
           {(publicationError || publicationSuccess) && (
             <div className="mt-5" aria-live="polite">
               {publicationError && (
-                <p role="alert" className="text-body-sm text-error">
+                <p role="alert" className="miad-feedback-enter text-body-sm text-error">
                   {publicationError}
                 </p>
               )}
               {publicationSuccess && (
-                <p className="text-body-sm text-success">{publicationSuccess}</p>
+                <p className="miad-feedback-enter text-body-sm text-success">
+                  {publicationSuccess}
+                </p>
               )}
             </div>
           )}
@@ -177,7 +180,7 @@ export function InvitationDetailsView({
               {formatEventDate(invitation.event.eventDate)}
             </dd>
           </div>
-          {isPublished && (
+          {hasPublicUrl && (
             <div className="sm:col-span-2">
               <dt className="text-label-sm uppercase tracking-wider text-muted">Public URL</dt>
               <dd className="mt-2 space-y-4">
@@ -191,6 +194,14 @@ export function InvitationDetailsView({
                 </Link>
                 <div className="flex flex-wrap gap-2">
                   <ShareButton url={publicUrl} title={invitation.event.title} />
+                  <Link
+                    href={publicPath}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`inline-flex min-h-10 items-center rounded-xl bg-primary px-4 py-2 text-label-md text-white ${focusRing}`}
+                  >
+                    Open invitation
+                  </Link>
                   <Link
                     href={`/dashboard/invitations/${invitation.id}/editor`}
                     className={`rounded-lg border border-line px-4 py-2 text-label-md text-ink ${focusRing}`}

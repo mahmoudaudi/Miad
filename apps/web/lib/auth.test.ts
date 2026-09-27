@@ -38,6 +38,22 @@ describe('auth client', () => {
     );
   });
 
+  it('shares a single refresh request between concurrent expired-session checks', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ message: 'Unauthorized' }, 401))
+      .mockResolvedValueOnce(jsonResponse({ message: 'Unauthorized' }, 401))
+      .mockResolvedValueOnce(jsonResponse(user, 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(Promise.all([getCurrentUser(), getCurrentUser()])).resolves.toEqual([user, user]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const refreshCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('/auth/refresh')
+    );
+    expect(refreshCalls).toHaveLength(1);
+  });
+
   it('refreshes an expired access token before retrying logout', async () => {
     const fetchMock = vi
       .fn()

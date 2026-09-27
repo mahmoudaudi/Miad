@@ -4,6 +4,8 @@ import { usePathname } from 'next/navigation';
 import React, { useState } from 'react';
 import { AccountMenu } from '@/components/ui/AccountMenu';
 import { Popover } from '@/components/ui/Popover';
+import { ShareButton } from '@/components/ui/ShareButton';
+import { formatEventDate } from '@/lib/events';
 import type { HtmlDesignArtifact, InvitationDesignSpecification } from '@/lib/invitation-designs';
 import { GenerationFailedNotice } from './GenerationFailedNotice';
 import { HtmlInvitationFrame } from './HtmlInvitationFrame';
@@ -26,12 +28,14 @@ export type StudioRecentInvitation = {
   id: string;
   title: string;
   eventDate: string;
-  createdAt: string;
+  status: string;
+  updatedAt: string;
+  hasDesign: boolean;
 };
 
 export type StudioPreview =
   | { status: 'empty' }
-  | { status: 'working' }
+  | { status: 'working'; operation?: 'generate' | 'refine' }
   | {
       status: 'ready';
       title: string;
@@ -40,6 +44,89 @@ export type StudioPreview =
     }
   | { status: 'ready'; title: string; artifact: HtmlDesignArtifact; renderUrl: string }
   | { status: 'failed' };
+
+export function isValidEditInstruction(value: string): boolean {
+  const length = value.trim().length;
+  return length >= 3 && length <= 1000;
+}
+
+export function EditDesignDialog({
+  onCancel,
+  onRegenerate,
+}: {
+  onCancel: () => void;
+  onRegenerate: (instruction: string) => void;
+}) {
+  const [instruction, setInstruction] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-design-title"
+        onSubmit={(event: React.FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          if (!isValidEditInstruction(instruction)) {
+            setError('Enter a design change using 3 to 1000 characters.');
+            return;
+          }
+          onRegenerate(instruction.trim());
+        }}
+        className="animate-modal-pop w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-lift sm:p-6"
+      >
+        <h2 id="edit-design-title" className="font-display text-headline-sm text-ink">
+          Edit design
+        </h2>
+        <p className="mt-2 text-body-sm text-muted">
+          Describe the visual change. Your event details will stay the same.
+        </p>
+        <label htmlFor="edit-design-instruction" className="mt-5 block text-label-md text-ink">
+          What would you like to change?
+        </label>
+        <textarea
+          id="edit-design-instruction"
+          autoFocus
+          rows={4}
+          maxLength={1000}
+          value={instruction}
+          onChange={(event) => {
+            setInstruction(event.target.value);
+            setError(null);
+          }}
+          placeholder="Make the background lighter and use emerald green accents."
+          className="miad-input mt-2 min-h-28 resize-y"
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? 'edit-design-error' : undefined}
+        />
+        {error && (
+          <p
+            id="edit-design-error"
+            role="alert"
+            className="miad-feedback-enter mt-2 text-body-sm text-error"
+          >
+            {error}
+          </p>
+        )}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="min-h-10 rounded-xl border border-line px-4 text-label-md text-ink"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="min-h-10 rounded-xl bg-primary px-4 text-label-md text-white"
+          >
+            Regenerate design
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 const workspaceLinks = [
   { href: '/dashboard/invitations/new', label: 'AI Studio', icon: 'auto_awesome' },
@@ -134,9 +221,17 @@ function MobileWorkspaceMenu({}: {}) {
 export function StudioHeader({
   manualHref,
   detailsHref,
+  publishUrl = null,
+  publishing = false,
+  publicationPending = false,
+  onPublish = () => undefined,
 }: {
   manualHref: string;
   detailsHref: string | null;
+  publishUrl?: string | null;
+  publishing?: boolean;
+  publicationPending?: boolean;
+  onPublish?: () => void;
 }) {
   const publishHref = detailsHref ?? '/dashboard/invitations';
   const pathname = usePathname();
@@ -213,15 +308,32 @@ export function StudioHeader({
           </span>
           Invite
         </Link>
-        <Link
-          href={publishHref}
-          className={`hidden h-8 items-center gap-1.5 rounded-md bg-[#9f1239] px-3.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#881337] sm:flex ${focusRing}`}
-        >
-          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-            language
-          </span>
-          Publish
-        </Link>
+        {detailsHref && (!publishUrl || publicationPending) && (
+          <button
+            type="button"
+            onClick={onPublish}
+            disabled={publishing}
+            className={`hidden h-8 items-center gap-1.5 rounded-md bg-[#9f1239] px-3.5 text-xs font-semibold text-white shadow-xs transition duration-200 ease-out hover:-translate-y-px hover:bg-[#881337] hover:shadow-sm active:translate-y-0 disabled:opacity-60 sm:flex ${focusRing}`}
+          >
+            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+              language
+            </span>
+            {publishing ? 'Publishing…' : publicationPending ? 'Publish update' : 'Publish'}
+          </button>
+        )}
+        {detailsHref && publishUrl && (
+          <Link
+            href={publishUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={`hidden h-8 items-center gap-1.5 rounded-md bg-[#047857] px-3.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#065f46] sm:flex ${focusRing}`}
+          >
+            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+              open_in_new
+            </span>
+            Open invitation
+          </Link>
+        )}
         <MobileWorkspaceMenu />
       </div>
     </header>
@@ -395,43 +507,102 @@ function formatRelativeSince(value: string, now: number): string {
   return relative.format(-Math.floor(elapsed / 1000), 'second');
 }
 
-function RecentProjectCards({ invitations }: { invitations: StudioRecentInvitation[] }) {
-  const now = Date.now();
+function RecentProjectCards({
+  invitations,
+  loading,
+}: {
+  invitations: StudioRecentInvitation[];
+  loading: boolean;
+}) {
   return (
-    <section aria-labelledby="studio-recent-heading">
+    <section aria-labelledby="studio-recent-heading" aria-busy={loading}>
       <h3
         id="studio-recent-heading"
         className="mb-3 text-xs font-medium tracking-wide text-[#71717a]"
       >
         Recent projects
       </h3>
-      {invitations.length === 0 ? (
-        <p className="max-w-lg rounded-xl border border-dashed border-[#e4e4e7] bg-white/70 px-4 py-3 text-xs text-[#71717a]">
-          Your invitations will appear here once you create your first one.
-        </p>
+      {loading ? (
+        <ul
+          aria-label="Loading recent projects"
+          className="grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+        >
+          {[0, 1, 2].map((index) => (
+            <li
+              key={index}
+              className="animate-pulse overflow-hidden rounded-xl border border-[#e4e4e7] bg-white shadow-sm"
+            >
+              <div className="aspect-[4/3] bg-[#f1f3f5]" />
+              <div className="space-y-2 p-4">
+                <div className="h-4 w-2/3 rounded bg-[#e5e7eb]" />
+                <div className="h-3 w-1/2 rounded bg-[#e5e7eb]" />
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : invitations.length === 0 ? (
+        <div className="flex min-h-28 max-w-5xl items-center gap-4 rounded-xl border border-dashed border-[#d4d4d8] bg-white/75 px-5 py-5 sm:px-6">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#fff1f2] text-[#9f1239]">
+            <span className="material-symbols-outlined text-xl" aria-hidden="true">
+              auto_awesome
+            </span>
+          </span>
+          <span>
+            <span className="block text-sm font-semibold text-[#27272a]">No projects yet</span>
+            <span className="mt-1 block text-xs text-[#71717a]">
+              Your invitations will appear here once you create your first one.
+            </span>
+          </span>
+        </div>
       ) : (
-        <ul className="grid max-w-3xl grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {invitations.map((invitation) => {
-            const when = formatRelativeSince(invitation.createdAt, now);
+            const updated = formatRelativeSince(invitation.updatedAt, Date.now());
+            const published = invitation.status === 'PUBLISHED';
             return (
               <li key={invitation.id}>
                 <Link
-                  href={`/dashboard/invitations/${invitation.id}`}
-                  className={`flex h-[68px] flex-col justify-between rounded-xl border border-[#e4e4e7] bg-white/80 p-3 shadow-xs backdrop-blur-xs transition hover:border-[#d4d4d8] hover:shadow-sm ${focusRing}`}
+                  href={`/dashboard/invitations/${invitation.id}/editor`}
+                  aria-label={`Open or edit ${invitation.title}`}
+                  className={`group block min-w-0 overflow-hidden rounded-xl border border-line bg-surface shadow-subtle transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-lift ${focusRing}`}
                 >
-                  <span className="truncate text-xs font-semibold text-[#27272a]">
-                    {invitation.title}
-                  </span>
-                  <span className="flex items-center gap-1.5 text-[10px] text-[#a1a1aa]">
+                  <div className="relative aspect-[4/3] overflow-hidden bg-[#f3f4f6]">
+                    {invitation.hasDesign ? (
+                      <HtmlInvitationFrame
+                        src={`/api/designs/${encodeURIComponent(invitation.id)}/render`}
+                        title={`${invitation.title} invitation preview`}
+                        className="pointer-events-none h-full w-full"
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-2 text-[#71717a]">
+                        <span className="material-symbols-outlined text-3xl" aria-hidden="true">
+                          mail
+                        </span>
+                        <span className="text-xs">Design preview coming soon</span>
+                      </div>
+                    )}
                     <span
-                      className="material-symbols-outlined shrink-0 text-[13px]"
-                      aria-hidden="true"
+                      className={`absolute start-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-semibold shadow-sm ${published ? 'bg-emerald-50 text-emerald-800' : 'bg-white/95 text-[#52525b]'}`}
                     >
-                      calendar_today
+                      {published ? 'Published' : 'Draft'}
                     </span>
-                    <span className="truncate">{invitation.eventDate}</span>
-                    {when && <span className="shrink-0">· {when}</span>}
-                  </span>
+                  </div>
+                  <div className="flex min-h-[92px] items-start justify-between gap-3 px-4 py-3">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-[#27272a]">
+                        {invitation.title}
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-[#71717a]">
+                        {formatEventDate(invitation.eventDate)}
+                      </span>
+                      <span className="mt-1 block text-[11px] text-[#a1a1aa]">
+                        Updated {updated || 'recently'}
+                      </span>
+                    </span>
+                    <span className="shrink-0 self-end text-xs font-semibold text-[#9f1239] transition-transform duration-200 group-hover:translate-x-0.5">
+                      Open/Edit
+                    </span>
+                  </div>
                 </Link>
               </li>
             );
@@ -522,6 +693,7 @@ function StudioLanding({
   firstName,
   suggestions,
   recentInvitations,
+  recentProjectsLoading,
   onSuggestion,
   onReloadSuggestions,
   canReloadSuggestions,
@@ -530,6 +702,7 @@ function StudioLanding({
   firstName: string;
   suggestions: string[];
   recentInvitations: StudioRecentInvitation[];
+  recentProjectsLoading: boolean;
   onSuggestion: (value: string) => void;
   onReloadSuggestions?: () => void;
   canReloadSuggestions?: boolean;
@@ -537,8 +710,8 @@ function StudioLanding({
 }) {
   return (
     <div className="miad-studio-glow flex flex-col overflow-y-auto px-5 py-7 sm:px-8 lg:px-10">
-      <div className="mx-auto w-full max-w-3xl">
-        <RecentProjectCards invitations={recentInvitations} />
+      <div className="mx-auto w-full max-w-5xl">
+        <RecentProjectCards invitations={recentInvitations} loading={recentProjectsLoading} />
       </div>
       <div className="mx-auto my-auto flex w-full max-w-2xl flex-col items-start py-10">
         <h1 className="mb-6 text-[26px] font-bold leading-tight tracking-tight text-[#18181b] sm:text-[31px]">
@@ -623,7 +796,7 @@ function MessageStream({
       {messages.map((message, index) => (
         <article
           key={`${message.role}-${index}`}
-          className={`max-w-[92%] rounded-lg px-3 py-2.5 text-[13px] leading-5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] ${
+          className={`${index === messages.length - 1 ? 'miad-feedback-enter' : ''} max-w-[92%] rounded-lg px-3 py-2.5 text-[13px] leading-5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] ${
             message.role === 'user'
               ? 'ms-auto bg-[#9f1239] text-white'
               : 'me-auto border border-[#dbe1e8] bg-white text-[#343a42]'
@@ -912,7 +1085,11 @@ function PromptComposer({
         </div>
       </div>
       {hint && (
-        <p id="studio-prompt-hint" role="status" className="mt-1.5 text-xs text-[#9a3412]">
+        <p
+          id="studio-prompt-hint"
+          role="status"
+          className="miad-feedback-enter mt-1.5 text-xs text-[#9a3412]"
+        >
           {hint}
         </p>
       )}
@@ -970,7 +1147,7 @@ function AgentPanel({
   return (
     <section
       aria-label="AI conversation"
-      className="flex min-h-[42rem] min-w-0 flex-col border-e border-[#d7dbe0] bg-[#f8fafc] lg:h-full lg:min-h-0 lg:w-[430px] lg:shrink-0"
+      className="miad-studio-chat-enter flex min-h-[42rem] min-w-0 flex-col border-e border-[#d7dbe0] bg-[#f8fafc] lg:h-full lg:min-h-0"
     >
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-[#d7dbe0] bg-[#f8fafc] px-3">
         <span className="flex size-6 items-center justify-center rounded bg-[#ffe4e6] text-[#9f1239]">
@@ -1017,17 +1194,21 @@ function CanvasPanel({
   preview,
   editorHref,
   detailsHref,
+  canEditDesign,
+  onEditDesign,
 }: {
   preview: StudioPreview;
   editorHref: string | null;
   detailsHref: string | null;
+  canEditDesign: boolean;
+  onEditDesign: () => void;
 }) {
   const ready = preview.status === 'ready';
   const legacy = ready && 'specification' in preview;
   return (
     <section
       aria-label="Live invitation preview"
-      className="flex min-h-[40rem] min-w-0 flex-col bg-[#e5e7eb] lg:h-full lg:min-h-0"
+      className="miad-studio-preview-enter flex min-h-[40rem] min-w-0 flex-col bg-[#e5e7eb] lg:h-full lg:min-h-0"
     >
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-[#cfd4da] bg-[#f3f4f6] px-3">
         <span className="material-symbols-outlined text-[18px] text-[#59616b]" aria-hidden="true">
@@ -1038,6 +1219,18 @@ function CanvasPanel({
           <span className="min-w-0 truncate text-[11px] text-[#5f6670]">{preview.title}</span>
         )}
         <div className="ms-auto flex shrink-0 items-center gap-1">
+          {ready && detailsHref && canEditDesign && (
+            <button
+              type="button"
+              onClick={onEditDesign}
+              className={`inline-flex min-h-11 items-center gap-1.5 rounded-md border border-[#cbd5e1] bg-white px-2.5 text-[11px] font-semibold text-[#3f4650] transition-colors hover:border-[#fda4af] hover:text-[#9f1239] ${focusRing}`}
+            >
+              <span className="material-symbols-outlined text-[17px]" aria-hidden="true">
+                tune
+              </span>
+              Edit design
+            </button>
+          )}
           {legacy && editorHref && (
             <Link
               href={editorHref}
@@ -1093,7 +1286,11 @@ function CanvasPanel({
               >
                 progress_activity
               </span>
-              <p className="text-[13px] font-semibold text-[#343a42]">Creating your invitation…</p>
+              <p className="text-[13px] font-semibold text-[#343a42]">
+                {preview.operation === 'refine'
+                  ? 'Updating your invitation…'
+                  : 'Creating your invitation…'}
+              </p>
             </div>
             <div className="mt-5 animate-pulse rounded-md bg-[#e5e7eb] p-5">
               <div className="mx-auto h-3 w-24 rounded bg-[#cbd5e1]" />
@@ -1156,6 +1353,7 @@ export function AiStudioView({
   onQuestionCancel,
   profile,
   recentInvitations = [],
+  recentProjectsLoading = false,
   micSupported,
   listening,
   loggingOut,
@@ -1171,6 +1369,12 @@ export function AiStudioView({
   canAttach = false,
   pendingUpload = null,
   attachNotice = null,
+  publishUrl = null,
+  publishing = false,
+  onPublish = () => undefined,
+  publicationPending = false,
+  canEditDesign = false,
+  onRegenerateDesign = () => undefined,
 }: {
   messages: StudioMessage[];
   preview: StudioPreview;
@@ -1192,6 +1396,7 @@ export function AiStudioView({
   onQuestionCancel?: () => void;
   profile: StudioProfile;
   recentInvitations?: StudioRecentInvitation[];
+  recentProjectsLoading?: boolean;
   loggingOut?: boolean;
   onLogout?: () => void;
   onPromptChange: (value: string) => void;
@@ -1204,10 +1409,17 @@ export function AiStudioView({
   canAttach?: boolean;
   pendingUpload?: { name: string; size: number; type: string } | null;
   attachNotice?: string | null;
+  publishUrl?: string | null;
+  publishing?: boolean;
+  onPublish?: () => void;
+  publicationPending?: boolean;
+  canEditDesign?: boolean;
+  onRegenerateDesign?: (instruction: string) => void;
   micSupported?: boolean;
   listening?: boolean;
   onToggleVoice?: () => void;
 }) {
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const started = messages.length > 0;
   const sidebar = (
     <StudioSidebar
@@ -1275,6 +1487,7 @@ export function AiStudioView({
               firstName={profile.name.split(' ')[0]?.trim() ?? ''}
               suggestions={suggestions}
               recentInvitations={recentInvitations}
+              recentProjectsLoading={recentProjectsLoading}
               onSuggestion={onSuggestion}
               onReloadSuggestions={onReloadSuggestions}
               canReloadSuggestions={canReloadSuggestions}
@@ -1285,34 +1498,90 @@ export function AiStudioView({
         </>
       ) : (
         <>
-          <StudioHeader manualHref={manualHref} detailsHref={detailsHref} />
-          <div className="lg:grid lg:h-[calc(100dvh-48px)] lg:grid-cols-[auto_430px_minmax(0,1fr)] lg:overflow-hidden">
+          <StudioHeader
+            manualHref={manualHref}
+            detailsHref={detailsHref}
+            publishUrl={publishUrl}
+            publishing={publishing}
+            publicationPending={publicationPending}
+            onPublish={onPublish}
+          />
+          {publishUrl && (
+            <div
+              role="status"
+              className="miad-feedback-enter flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#cfd4da] bg-white px-4 py-2 text-xs"
+            >
+              <span className="font-semibold text-[#047857]">
+                {publicationPending ? 'New design ready to publish' : 'Published'}
+              </span>
+              <a
+                href={publishUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="break-all text-[#374151] underline underline-offset-2"
+              >
+                {publishUrl}
+              </a>
+              <ShareButton
+                url={publishUrl}
+                title={preview.status === 'ready' ? preview.title : ''}
+              />
+              <Link
+                href={publishUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-[#9f1239]"
+              >
+                Open invitation
+              </Link>
+            </div>
+          )}
+          <div
+            className={`lg:grid lg:grid-cols-[auto_minmax(0,1fr)] lg:overflow-hidden ${publishUrl ? 'lg:h-[calc(100dvh-84px)]' : 'lg:h-[calc(100dvh-48px)]'}`}
+          >
             {sidebar}
-            <AgentPanel
-              messages={messages}
-              generationProgress={generationProgress}
-              preview={preview}
-              prompt={prompt}
-              hint={hint}
-              sendDisabled={sendDisabled}
-              sendLabel={sendLabel}
-              editorHref={editorHref}
-              failedMessage={failedMessage}
-              imageBar={imageBar}
-              questionPhase={questionPhase}
-              question={question}
-              questionDisabled={questionDisabled}
-              onQuestionAnswer={onQuestionAnswer ?? (() => undefined)}
-              onQuestionCancel={onQuestionCancel ?? (() => undefined)}
-              onPromptChange={onPromptChange}
-              onSend={onSend}
-              onStop={onStop}
-              micSupported={micSupported ?? false}
-              listening={listening ?? false}
-              onToggleVoice={onToggleVoice ?? (() => undefined)}
-            />
-            <CanvasPanel preview={preview} editorHref={editorHref} detailsHref={detailsHref} />
+            <div className="miad-studio-split-panels min-w-0 lg:min-h-0 lg:overflow-hidden">
+              <AgentPanel
+                messages={messages}
+                generationProgress={generationProgress}
+                preview={preview}
+                prompt={prompt}
+                hint={hint}
+                sendDisabled={sendDisabled}
+                sendLabel={sendLabel}
+                editorHref={editorHref}
+                failedMessage={failedMessage}
+                imageBar={imageBar}
+                questionPhase={questionPhase}
+                question={question}
+                questionDisabled={questionDisabled}
+                onQuestionAnswer={onQuestionAnswer ?? (() => undefined)}
+                onQuestionCancel={onQuestionCancel ?? (() => undefined)}
+                onPromptChange={onPromptChange}
+                onSend={onSend}
+                onStop={onStop}
+                micSupported={micSupported ?? false}
+                listening={listening ?? false}
+                onToggleVoice={onToggleVoice ?? (() => undefined)}
+              />
+              <CanvasPanel
+                preview={preview}
+                editorHref={editorHref}
+                detailsHref={detailsHref}
+                canEditDesign={canEditDesign}
+                onEditDesign={() => setEditDialogOpen(true)}
+              />
+            </div>
           </div>
+          {editDialogOpen && detailsHref && (
+            <EditDesignDialog
+              onCancel={() => setEditDialogOpen(false)}
+              onRegenerate={(instruction) => {
+                setEditDialogOpen(false);
+                onRegenerateDesign(instruction);
+              }}
+            />
+          )}
         </>
       )}
     </main>

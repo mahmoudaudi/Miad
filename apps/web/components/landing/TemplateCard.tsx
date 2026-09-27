@@ -427,7 +427,7 @@ export function TemplateCard(props: TemplateCardProps) {
     <Link
       href="/register"
       aria-label={`${actionLabel}: ${label}`}
-      className="group min-w-0 overflow-hidden rounded-xl border border-line bg-surface transition-transform duration-200 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+      className="group min-w-0 overflow-hidden rounded-xl border border-line bg-surface shadow-subtle transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
     >
       <div
         aria-hidden="true"

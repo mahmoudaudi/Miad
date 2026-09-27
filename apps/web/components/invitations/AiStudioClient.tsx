@@ -38,9 +38,10 @@ import {
   clearPendingInvitationPrompt,
   readPendingInvitationPrompt,
 } from '@/lib/pending-invitation-prompt';
-import { listInvitations } from '@/lib/invitations';
+import { listInvitations, updateInvitationPublication } from '@/lib/invitations';
 import {
   AiStudioView,
+  isValidEditInstruction,
   type StudioMessage,
   type StudioPreview,
   type StudioQuestionPhase,
@@ -84,6 +85,11 @@ export function AiStudioClient() {
   // Two chips at a time, paged through the real prompt pool so the reload button
   // always yields a different pair instead of a decorative no-op.
   const [promptOffset, setPromptOffset] = useState(0);
+  const [publishUrl, setPublishUrl] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [invitationIsPublished, setInvitationIsPublished] = useState(false);
+  const [activeDesignVersion, setActiveDesignVersion] = useState<number | null>(null);
+  const [publishedDesignVersion, setPublishedDesignVersion] = useState<number | null>(null);
   const suggestions = useMemo(() => {
     const size = promptPool.length;
     if (!size) return [];
@@ -121,6 +127,7 @@ export function AiStudioClient() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [recentInvitations, setRecentInvitations] = useState<StudioRecentInvitation[]>([]);
+  const [recentProjectsLoading, setRecentProjectsLoading] = useState(true);
   const communitySlug = searchParams.get('community');
   const [micSupported, setMicSupported] = useState(false);
   const [listening, setListening] = useState(false);
@@ -208,11 +215,13 @@ export function AiStudioClient() {
       .then((invitations) => {
         if (!active) return;
         setRecentInvitations(
-          invitations.slice(0, 3).map((invitation) => ({
+          invitations.map((invitation) => ({
             id: invitation.id,
             title: invitation.event.title,
             eventDate: invitation.event.eventDate,
-            createdAt: invitation.createdAt,
+            status: invitation.status,
+            updatedAt: invitation.updatedAt,
+            hasDesign: invitation.hasDesign,
           }))
         );
       })
@@ -220,6 +229,9 @@ export function AiStudioClient() {
         if (caught instanceof ApiError && caught.status === 401) {
           router.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
         }
+      })
+      .finally(() => {
+        if (active) setRecentProjectsLoading(false);
       });
     return () => {
       active = false;
@@ -229,6 +241,16 @@ export function AiStudioClient() {
   const applyResult = useCallback(
     (result: AiStudioResult, communitySpecification?: InvitationDesignSpecification) => {
       setInvitationId(result.invitation.id);
+      setPublishUrl(null);
+      setInvitationIsPublished(
+        result.invitation.status === 'PUBLISHED' && Boolean(result.invitation.publishedAt)
+      );
+      setActiveDesignVersion(result.design?.version ?? null);
+      setPublishedDesignVersion(
+        result.invitation.status === 'PUBLISHED' && result.invitation.publishedAt
+          ? (result.design?.version ?? null)
+          : null
+      );
       setEventType(result.event.eventType);
       if (communitySpecification) {
         setSpec(communitySpecification);
@@ -353,6 +375,87 @@ export function AiStudioClient() {
       }
     },
     [applyResult, communitySlug, invitationId, preview, router, websiteProject]
+  );
+
+  const regenerateDesign = useCallback(
+    async (instruction: string) => {
+      const cleanInstruction = instruction.trim();
+      if (!isValidEditInstruction(cleanInstruction)) {
+        setHint('Describe a design change using 3 to 1000 characters.');
+        return;
+      }
+      if (
+        !invitationId ||
+        !websiteProject ||
+        preview.status !== 'ready' ||
+        working ||
+        sendInFlight.current
+      )
+        return;
+      const previousPreview = preview;
+      const controller = new AbortController();
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = controller;
+      sendInFlight.current = true;
+      setHint(null);
+      setWorking(true);
+      setGenerationProgress(null);
+      setPreview({ status: 'working', operation: 'refine' });
+      setMessages((current) => [...current, { role: 'user', text: cleanInstruction }]);
+      try {
+        const design = await refineAiStudio(
+          { invitationId, website: websiteProject, prompt: cleanInstruction },
+          controller.signal
+        );
+        if (controller.signal.aborted) return;
+        setWebsiteProject(design.project);
+        setActiveDesignVersion(design.version);
+        setPreview({
+          status: 'ready',
+          title: design.artifact.title,
+          artifact: design.artifact,
+          renderUrl: `/api/designs/${invitationId}/render`,
+        });
+        setMessages((current) => [
+          ...current,
+          {
+            role: 'ai',
+            text: invitationIsPublished
+              ? `Updated — “${design.artifact.title}” is ready. Publish the update when you want it to replace the public design.`
+              : `Updated — “${design.artifact.title}” reflects your changes.`,
+          },
+        ]);
+      } catch (caught) {
+        setPreview(previousPreview);
+        if (controller.signal.aborted) {
+          setMessages((current) => [
+            ...current,
+            {
+              role: 'ai',
+              text: 'Design update cancelled. Your previous preview is still available.',
+            },
+          ]);
+        } else if (caught instanceof ApiError && caught.status === 401) {
+          router.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
+        } else {
+          setMessages((current) => [
+            ...current,
+            {
+              role: 'ai',
+              text:
+                caught instanceof ApiError
+                  ? caught.message
+                  : 'I could not update the design. Your previous version is still available.',
+            },
+          ]);
+        }
+      } finally {
+        if (requestControllerRef.current === controller) requestControllerRef.current = null;
+        sendInFlight.current = false;
+        setWorking(false);
+      }
+    },
+    [invitationId, invitationIsPublished, preview, router, websiteProject, working]
   );
 
   /**
@@ -662,6 +765,34 @@ export function AiStudioClient() {
   const editorHref = invitationId ? `/dashboard/invitations/${invitationId}/editor` : null;
   const detailsHref = invitationId ? `/dashboard/invitations/${invitationId}` : null;
 
+  useEffect(() => {
+    setPublishUrl(null);
+  }, [invitationId]);
+
+  const publishInvitation = useCallback(async () => {
+    if (!invitationId || publishing || preview.status !== 'ready') return;
+    setPublishing(true);
+    try {
+      const invitation = await updateInvitationPublication(invitationId, true);
+      setPublishUrl(`${window.location.origin}/invite/${encodeURIComponent(invitation.slug)}`);
+      setInvitationIsPublished(true);
+      setPublishedDesignVersion(activeDesignVersion);
+    } catch (error) {
+      const message =
+        error instanceof ApiError ? error.message : 'We could not publish this invitation.';
+      setHint(message);
+    } finally {
+      setPublishing(false);
+    }
+  }, [activeDesignVersion, invitationId, publishing, preview.status]);
+
+  const publicationPending = Boolean(
+    invitationIsPublished &&
+    activeDesignVersion !== null &&
+    publishedDesignVersion !== null &&
+    activeDesignVersion > publishedDesignVersion
+  );
+
   return (
     <AiStudioView
       messages={messages}
@@ -676,6 +807,12 @@ export function AiStudioClient() {
       canReloadSuggestions={canReloadSuggestions}
       editorHref={editorHref}
       detailsHref={preview.status === 'ready' ? detailsHref : null}
+      publishUrl={publishUrl}
+      publishing={publishing}
+      publicationPending={publicationPending}
+      onPublish={() => void publishInvitation()}
+      canEditDesign={Boolean(invitationId && websiteProject && preview.status === 'ready')}
+      onRegenerateDesign={(instruction) => void regenerateDesign(instruction)}
       failedMessage={failed?.message ?? null}
       questionPhase={questionPhase}
       question={question}
@@ -708,6 +845,7 @@ export function AiStudioClient() {
       }
       attachNotice={imageNotice}
       recentInvitations={recentInvitations}
+      recentProjectsLoading={recentProjectsLoading}
       micSupported={micSupported}
       listening={listening}
       onToggleVoice={toggleVoiceInput}

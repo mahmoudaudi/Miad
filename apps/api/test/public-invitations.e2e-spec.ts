@@ -112,6 +112,7 @@ describe('Public invitations e2e', () => {
       .expect((response) => {
         expect(response.body.status).toBe('PUBLISHED');
         expect(response.body.publishedAt).toEqual(expect.any(String));
+        expect(response.body.slug).toBe(ownerSlug);
       });
 
     await request(server)
@@ -155,6 +156,65 @@ describe('Public invitations e2e', () => {
       });
   });
 
+  it('keeps the published version public until a later version is explicitly published', async () => {
+    const server = app.getHttpServer();
+    const previous = await prisma.invitationDesign.findFirstOrThrow({
+      where: { invitationId: ownerInvitationId, isActive: true },
+    });
+    const previousSpec = previous.designSpecification as {
+      content: { title: string };
+      [key: string]: unknown;
+    };
+    const nextSpec = {
+      ...previousSpec,
+      content: { ...previousSpec.content, title: 'New unpublished design' },
+    };
+    await prisma.$transaction([
+      prisma.invitationDesign.updateMany({
+        where: { invitationId: ownerInvitationId, isActive: true },
+        data: { isActive: false },
+      }),
+      prisma.invitationDesign.create({
+        data: {
+          invitationId: ownerInvitationId,
+          version: previous.version + 1,
+          designSpecification: nextSpec,
+          sourceType: 'AI_EDIT',
+          isActive: true,
+        },
+      }),
+    ]);
+
+    await request(server)
+      .get(`/api/v1/public/invitations/${ownerSlug}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.designSpecification.content.title).toBe('Published Garden Evening');
+      });
+
+    await withCookies(
+      request(server).patch(`/api/v1/invitations/${ownerInvitationId}/publication`),
+      ownerCookies
+    )
+      .send({ published: true })
+      .expect(200);
+    await request(server)
+      .get(`/api/v1/public/invitations/${ownerSlug}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.designSpecification.content.title).toBe('New unpublished design');
+      });
+    const versions = await prisma.invitationDesign.findMany({
+      where: { invitationId: ownerInvitationId },
+      orderBy: { version: 'asc' },
+      select: { version: true, isActive: true },
+    });
+    expect(versions).toEqual([
+      { version: 1, isActive: false },
+      { version: 2, isActive: true },
+    ]);
+  });
+
   it('unpublishes and immediately makes the public slug unavailable', async () => {
     const server = app.getHttpServer();
     await withCookies(
@@ -170,6 +230,18 @@ describe('Public invitations e2e', () => {
     await request(server).get(`/api/v1/public/invitations/${ownerSlug}/render`).expect(404);
   });
 
+  it('reuses the same globally unique slug when republishing', async () => {
+    const server = app.getHttpServer();
+    await withCookies(
+      request(server).patch(`/api/v1/invitations/${ownerInvitationId}/publication`),
+      ownerCookies
+    )
+      .send({ published: true })
+      .expect(200)
+      .expect((response) => expect(response.body.slug).toBe(ownerSlug));
+    await request(server).get(`/api/v1/public/invitations/${ownerSlug}/render`).expect(200);
+  });
+
   it('publishes and safely renders a sanitized standalone HTML artifact', async () => {
     await prisma.$transaction([
       prisma.invitationDesign.updateMany({
@@ -179,7 +251,7 @@ describe('Public invitations e2e', () => {
       prisma.invitationDesign.create({
         data: {
           invitationId: ownerInvitationId,
-          version: 2,
+          version: 3,
           designSpecification: {
             format: 'html',
             version: 1,

@@ -312,16 +312,20 @@ export class InvitationDesignsService {
     const invitation = await this.prisma.invitation.findFirst({
       where: { slug, status: 'PUBLISHED', publishedAt: { not: null } },
       select: {
+        id: true,
+        publishedDesignVersion: true,
         event: { select: eventSelect },
-        designs: {
-          where: { isActive: true },
-          orderBy: { version: 'desc' },
-          take: 1,
-          select: { designSpecification: true },
-        },
       },
     });
-    const design = invitation?.designs[0];
+    const design = invitation?.publishedDesignVersion
+      ? await this.prisma.invitationDesign.findFirst({
+          where: {
+            invitationId: invitation.id,
+            version: invitation.publishedDesignVersion,
+          },
+          select: { designSpecification: true },
+        })
+      : null;
     if (!invitation || !design) {
       throw new NotFoundException('Invitation not found.');
     }
@@ -353,16 +357,20 @@ export class InvitationDesignsService {
     const invitation = await this.prisma.invitation.findFirst({
       where: { slug, status: 'PUBLISHED', publishedAt: { not: null } },
       select: {
+        id: true,
+        publishedDesignVersion: true,
         event: { select: eventSelect },
-        designs: {
-          where: { isActive: true },
-          orderBy: { version: 'desc' },
-          take: 1,
-          select: { designSpecification: true },
-        },
       },
     });
-    const design = invitation?.designs[0];
+    const design = invitation?.publishedDesignVersion
+      ? await this.prisma.invitationDesign.findFirst({
+          where: {
+            invitationId: invitation.id,
+            version: invitation.publishedDesignVersion,
+          },
+          select: { designSpecification: true },
+        })
+      : null;
     if (!invitation || !design) throw new NotFoundException('Invitation not found.');
     if (isHtmlArtifactEnvelope(design.designSpecification)) {
       try {
@@ -614,7 +622,8 @@ export class InvitationDesignsService {
   async refineHtmlWithAi(
     userId: string,
     invitationId: string,
-    instruction: string
+    instruction: string,
+    signal?: AbortSignal
   ): Promise<InvitationHtmlDesignResponse> {
     const cleanInstruction = instruction.trim();
     if (cleanInstruction.length < 3 || cleanInstruction.length > 1_000) {
@@ -633,7 +642,9 @@ export class InvitationDesignsService {
         prompt: cleanInstruction,
         event: this.toAiEventContext(invitation.event),
         project: this.toWebsiteProject(currentArtifact),
+        signal,
       });
+      if (signal?.aborted) throw new AiGenerationCancelledError();
       const artifact = sanitizeHtmlArtifact({
         ...result.artifact,
         format: 'html',
@@ -648,6 +659,9 @@ export class InvitationDesignsService {
         tokensUsed: result.tokensUsed,
       });
     } catch (caught) {
+      if (caught instanceof AiGenerationCancelledError || signal?.aborted) {
+        throw new AiGenerationCancelledError();
+      }
       const error =
         caught instanceof HtmlArtifactValidationError
           ? new InvitationAiProviderError(

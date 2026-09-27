@@ -67,6 +67,68 @@ textarea {
   animation: modal-pop 0.2s ease-out;
 }
 
+@keyframes studio-panel-enter-start {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes studio-panel-enter-preview {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.miad-studio-chat-enter {
+  animation: studio-panel-enter-start 240ms var(--motion-ease, ease-out) both;
+}
+
+.miad-studio-preview-enter {
+  animation: studio-panel-enter-preview 280ms var(--motion-ease, ease-out) 60ms both;
+}
+
+@keyframes studio-split-open {
+  from {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+  to {
+    grid-template-columns: 430px minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .miad-studio-split-panels {
+    display: grid;
+    grid-template-columns: 430px minmax(0, 1fr);
+    animation: studio-split-open 360ms var(--motion-ease) both;
+  }
+}
+
+@keyframes feedback-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.miad-feedback-enter {
+  animation: feedback-enter 180ms var(--motion-ease, ease-out) both;
+}
+
 .font-inter {
   font-family: 'Inter', system-ui, sans-serif;
 }

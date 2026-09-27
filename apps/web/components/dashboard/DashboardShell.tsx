@@ -2,10 +2,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import {
-  AiStudioWorkspaceChrome,
-  type StudioProfile,
-} from '@/components/invitations/AiStudioView';
+import { AiStudioWorkspaceChrome, type StudioProfile } from '@/components/invitations/AiStudioView';
 import { AuthUser, getCurrentUser, logout } from '@/lib/auth';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLocale } from '@/lib/i18n/LocaleProvider';
@@ -15,6 +12,10 @@ const WorkspaceActionsContext = createContext<{
   loggingOut: boolean;
   onLogout: () => void;
 } | null>(null);
+
+export function isAiStudioPath(pathname: string | null): boolean {
+  return pathname?.replace(/\/+$/, '') === '/dashboard/invitations/new';
+}
 
 export function useDashboardSession(): AuthUser {
   const user = useContext(SessionContext);
@@ -82,7 +83,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const isAiStudio = pathname === '/dashboard/invitations/new';
+  const isAiStudio = isAiStudioPath(pathname);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,7 +130,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <h1 className="font-display text-headline-md text-ink">
             {t.dashboard.workspaceUnavailable}
           </h1>
-          <p role="alert" className="mt-3 text-body-md text-muted">
+          <p role="alert" className="miad-feedback-enter mt-3 text-body-md text-muted">
             {error}
           </p>
           <button
@@ -146,9 +147,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <SessionContext.Provider value={user}>
-      <WorkspaceActionsContext.Provider
-        value={{ loggingOut, onLogout: () => void handleLogout() }}
-      >
+      <WorkspaceActionsContext.Provider value={{ loggingOut, onLogout: () => void handleLogout() }}>
         {isAiStudio ? (
           children
         ) : (
@@ -166,7 +165,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             onLogout={() => void handleLogout()}
           >
             {actionError && (
-              <p role="alert" className="mb-4 text-sm text-[#9f1239]">
+              <p role="alert" className="miad-feedback-enter mb-4 text-sm text-[#9f1239]">
                 {actionError}
               </p>
             )}

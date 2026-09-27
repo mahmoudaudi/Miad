@@ -40,14 +40,14 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  role          Role           @relation(fields: [roleId], references: [id])
-  events        Event[]
-  notifications Notification[]
-  mediaAssets   MediaAsset[]
-  aiUsage       AiUsage[]
-  subscriptions Subscription[]
-  communityDesigns CommunityDesign[]
-  oauthAccounts OAuthAccount[]
+  role                Role                 @relation(fields: [roleId], references: [id])
+  events              Event[]
+  notifications       Notification[]
+  mediaAssets         MediaAsset[]
+  aiUsage             AiUsage[]
+  subscriptions       Subscription[]
+  communityDesigns    CommunityDesign[]
+  oauthAccounts       OAuthAccount[]
   passwordResetTokens PasswordResetToken[]
 
   @@map("users")
@@ -77,20 +77,21 @@ model Event {
 }
 
 model Invitation {
-  id          String    @id @default(uuid()) @db.Uuid
-  eventId     String    @unique @map("event_id") @db.Uuid
-  slug        String    @unique @db.VarChar(255)
-  status      String    @db.VarChar(30)
-  publishedAt DateTime? @map("published_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  id                     String    @id @default(uuid()) @db.Uuid
+  eventId                String    @unique @map("event_id") @db.Uuid
+  slug                   String    @unique @db.VarChar(255)
+  status                 String    @db.VarChar(30)
+  publishedAt            DateTime? @map("published_at")
+  publishedDesignVersion Int?      @map("published_design_version")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
-  event   Event              @relation(fields: [eventId], references: [id])
-  designs InvitationDesign[]
-  guests  Guest[]
-  media   MediaAsset[]
-  aiUsage AiUsage[]
-  views   InvitationView[]
+  event           Event              @relation(fields: [eventId], references: [id])
+  designs         InvitationDesign[]
+  guests          Guest[]
+  media           MediaAsset[]
+  aiUsage         AiUsage[]
+  views           InvitationView[]
   communityDesign CommunityDesign?
 
   @@map("invitations")
@@ -205,8 +206,8 @@ model CommunityDesign {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  creator     User       @relation(fields: [creatorId], references: [id])
-  invitation  Invitation @relation(fields: [invitationId], references: [id])
+  creator    User       @relation(fields: [creatorId], references: [id])
+  invitation Invitation @relation(fields: [invitationId], references: [id])
 
   @@index([isPublished, category, createdAt])
   @@index([creatorId, createdAt])

@@ -1,7 +1,12 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { AiStudioView, type StudioPreview } from './AiStudioView';
+import {
+  AiStudioView,
+  EditDesignDialog,
+  isValidEditInstruction,
+  type StudioPreview,
+} from './AiStudioView';
 
 const noop = () => undefined;
 const base = {
@@ -55,6 +60,52 @@ const artifactPreview: StudioPreview = {
 };
 
 describe('AiStudioView', () => {
+  it('offers Edit design for a ready generated preview and renders an instruction dialog', () => {
+    const preview = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'A garden dinner' }]}
+        preview={artifactPreview}
+        detailsHref="/dashboard/invitations/inv-1"
+        canEditDesign
+      />
+    );
+    const dialog = renderToStaticMarkup(<EditDesignDialog onCancel={noop} onRegenerate={noop} />);
+    expect(preview).toContain('Edit design');
+    expect(dialog).toContain('aria-modal="true"');
+    expect(dialog).toContain('animate-modal-pop');
+    expect(dialog).toContain('What would you like to change?');
+    expect(dialog).toContain('Regenerate design');
+    expect(isValidEditInstruction('  ')).toBe(false);
+    expect(isValidEditInstruction('ab')).toBe(false);
+    expect(isValidEditInstruction('Make it lighter.')).toBe(true);
+    expect(isValidEditInstruction('x'.repeat(1001))).toBe(false);
+  });
+
+  it('uses the existing preview progress state for design refinement', () => {
+    const html = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'Make the background lighter.' }]}
+        preview={{ status: 'working', operation: 'refine' }}
+      />
+    );
+    expect(html).toContain('Updating your invitation…');
+    expect(html).not.toContain('Creating your invitation…');
+  });
+
+  it('introduces the chat and live preview with staged entrance transitions', () => {
+    const html = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'A garden dinner' }]}
+        preview={{ status: 'working' }}
+      />
+    );
+    expect(html).toContain('miad-studio-chat-enter');
+    expect(html).toContain('miad-studio-preview-enter');
+  });
+
   it('renders the landing state with real recent projects, greeting, and suggestions', () => {
     const html = renderToStaticMarkup(
       <AiStudioView
@@ -65,8 +116,10 @@ describe('AiStudioView', () => {
           {
             id: 'inv-1',
             title: 'Garden Dinner',
-            eventDate: 'December 12, 2026',
-            createdAt: new Date().toISOString(),
+            eventDate: '2026-12-12',
+            status: 'PUBLISHED',
+            updatedAt: new Date().toISOString(),
+            hasDesign: true,
           },
         ]}
       />
@@ -77,12 +130,33 @@ describe('AiStudioView', () => {
     expect(html).toContain('Maya, what are we working on today?');
     expect(html).toContain('Tech Founder Dinner');
     expect(html).toContain('aria-label="Account: Maya Haddad"');
-    expect(html).toContain('href="/dashboard/invitations/inv-1"');
+    expect(html).toContain('src="/api/designs/inv-1/render"');
+    expect(html).toContain('title="Garden Dinner invitation preview"');
+    expect(html).toContain('sandbox=""');
+    expect(html).toContain('aspect-[4/3]');
+    expect(html).toContain('Published');
+    expect(html).toContain('December 12, 2026');
+    expect(html).toContain('Open/Edit');
+    expect(html).toContain('href="/dashboard/invitations/inv-1/editor"');
     // The split studio is reserved for an active conversation.
     expect(html).not.toContain('aria-label="AI conversation"');
     expect(html).not.toContain('aria-label="Live invitation preview"');
     expect(html).not.toContain('href="#"');
     expect(html).not.toContain('<script');
+  });
+
+  it('shows a responsive loading skeleton and a designed empty state for recent projects', () => {
+    const loading = renderToStaticMarkup(
+      <AiStudioView {...base} messages={[]} preview={{ status: 'empty' }} recentProjectsLoading />
+    );
+    expect(loading).toContain('aria-label="Loading recent projects"');
+    expect(loading).toContain('animate-pulse');
+
+    const empty = renderToStaticMarkup(
+      <AiStudioView {...base} messages={[]} preview={{ status: 'empty' }} />
+    );
+    expect(empty).toContain('No projects yet');
+    expect(empty).toContain('Your invitations will appear here once you create your first one.');
   });
 
   it('promotes to the split studio once the client sends a prompt', () => {
@@ -95,7 +169,8 @@ describe('AiStudioView', () => {
     );
     expect(html).toContain('aria-label="AI conversation"');
     expect(html).toContain('aria-label="Live invitation preview"');
-    expect(html).toContain('lg:w-[430px]');
+    expect(html).toContain('miad-studio-split-panels');
+    expect(html).toContain('lg:grid-cols-[auto_minmax(0,1fr)]');
     expect(html).not.toContain('miad-studio-glow');
   });
 
@@ -118,7 +193,7 @@ describe('AiStudioView', () => {
     expect(html).toContain('lg:grid-cols-[224px_430px_minmax(0,1fr)]');
     expect(html).toContain('h-12 grid-cols-[minmax(0,1fr)_auto]');
     expect(html).toContain('w-[224px]');
-    expect(html).toContain('lg:w-[430px]');
+    expect(html).toContain('miad-studio-split-panels');
     expect(html).toContain('aria-label="AI conversation"');
     expect(html).toContain('Your invitation preview will appear here');
     expect(html).toContain('Maya Haddad');
@@ -149,7 +224,40 @@ describe('AiStudioView', () => {
     expect(html).toContain('Open editor');
     expect(html).toContain('href="/dashboard/invitations/inv-1"');
     expect(html).toContain('View details');
+    expect(html).toContain('>Publish</button>');
     expect(html).not.toContain('Tech Founder Dinner');
+  });
+
+  it('marks a regenerated published design as waiting for an explicit publish update', () => {
+    const html = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'A garden dinner' }]}
+        preview={artifactPreview}
+        detailsHref="/dashboard/invitations/inv-1"
+        publishUrl="https://miad.test/invite/garden-dinner"
+        publicationPending
+        onPublish={noop}
+      />
+    );
+    expect(html).toContain('New design ready to publish');
+    expect(html).toContain('Publish update');
+    expect(html).toContain('https://miad.test/invite/garden-dinner');
+  });
+
+  it('shows the public URL and open action after publishing', () => {
+    const html = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'A garden dinner' }]}
+        preview={{ status: 'ready', title: 'Garden Dinner', specification }}
+        detailsHref="/dashboard/invitations/inv-1"
+        publishUrl="https://example.test/invite/garden-dinner"
+      />
+    );
+    expect(html).toContain('https://example.test/invite/garden-dinner');
+    expect(html).toContain('Open invitation');
+    expect(html).toContain('href="https://example.test/invite/garden-dinner"');
   });
 
   it('renders standalone HTML artifacts in a sandboxed iframe preview', () => {
