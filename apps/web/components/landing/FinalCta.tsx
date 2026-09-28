@@ -1,11 +1,11 @@
-import Link from 'next/link';
 import React from 'react';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import type { Locale } from '@/lib/i18n/locales';
+import { AuthModalTrigger } from './AuthModalTrigger';
 import { CONTAINER } from './theme';
 import { Reveal } from './Reveal';
 
-/** Final CTA — the page's closing statement with the real signup route. */
+/** Final CTA — opens account creation in the in-app auth modal. */
 export function FinalCta({ locale }: { locale: Locale }) {
   const t = getDictionary(locale).finalCta;
   return (
@@ -19,15 +19,15 @@ export function FinalCta({ locale }: { locale: Locale }) {
             {t.title}
           </h2>
           <p className="mb-9 text-body-lg text-muted">{t.subtitle}</p>
-          <Link
-            href="/register"
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-8 py-4 font-title text-label-md text-white transition-all hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:w-auto"
+          <AuthModalTrigger
+            mode="register"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-8 py-4 font-title text-label-md text-primary-foreground transition-all hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:w-auto"
           >
             {t.button}
             <span className="material-symbols-outlined text-base" aria-hidden="true">
               arrow_forward
             </span>
-          </Link>
+          </AuthModalTrigger>
         </Reveal>
       </div>
     </section>

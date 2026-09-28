@@ -1,17 +1,24 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { copyInvitationLink, performInvitationShare, ShareButton } from './ShareButton';
+import {
+  copyInvitationLink,
+  invitationShareHref,
+  performInstagramShare,
+  performInvitationShare,
+  ShareButton,
+} from './ShareButton';
 
 describe('ShareButton', () => {
-  it('renders copy, share, and success feedback affordances for a public URL', () => {
+  it('renders a single public invitation share trigger', () => {
     const html = renderToStaticMarkup(
       <ShareButton url="/invite/garden-dinner" title="Garden Dinner" />
     );
-    expect(html).toContain('Copy link');
-    expect(html).toContain('Share');
-    expect(html).toContain('aria-live="polite"');
-    expect(html).toContain('hover:-translate-y-px');
+    expect(html).toContain('aria-label="Share invitation"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain('>Share</span>');
+    expect(html).not.toContain('Garden Dinner');
   });
 
   it('copies an absolute public URL successfully', async () => {
@@ -55,6 +62,42 @@ describe('ShareButton', () => {
       })
     ).resolves.toBe('copied');
     expect(writeText).toHaveBeenCalledWith('https://miad.test/invite/garden-dinner');
+  });
+
+  it('builds platform-specific links without inventing an Instagram share URL', () => {
+    expect(invitationShareHref('whatsapp', '/invite/garden', 'Garden Dinner', 'https://miad.test'))
+      .toContain('https://wa.me/?text=');
+    expect(invitationShareHref('facebook', '/invite/garden', 'Garden Dinner', 'https://miad.test'))
+      .toContain('https://www.facebook.com/sharer/sharer.php?u=');
+    expect(invitationShareHref('x', '/invite/garden', 'Garden Dinner', 'https://miad.test'))
+      .toContain('https://twitter.com/intent/tweet?');
+    expect(invitationShareHref('telegram', '/invite/garden', 'Garden Dinner', 'https://miad.test'))
+      .toContain('https://t.me/share/url?');
+    expect(invitationShareHref('email', '/invite/garden', 'Garden Dinner', 'https://miad.test'))
+      .toContain('mailto:?subject=');
+    expect(invitationShareHref('instagram', '/invite/garden', 'Garden Dinner', 'https://miad.test'))
+      .toBeNull();
+  });
+
+  it('uses native sharing for Instagram when available and copies the link otherwise', async () => {
+    const share = vi.fn().mockResolvedValue(undefined);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    await expect(performInstagramShare('/invite/garden', 'Garden Dinner', {
+      origin: 'https://miad.test', clipboard: { writeText }, share,
+    })).resolves.toBe('shared');
+    expect(share).toHaveBeenCalledWith({ title: 'Garden Dinner', url: 'https://miad.test/invite/garden' });
+    expect(writeText).not.toHaveBeenCalled();
+
+    await expect(performInstagramShare('/invite/garden', 'Garden Dinner', {
+      origin: 'https://miad.test', clipboard: { writeText },
+    })).resolves.toBe('copied');
+    expect(writeText).toHaveBeenCalledWith('https://miad.test/invite/garden');
+  });
+
+  it('keeps motion preference support in the share overlay styles', () => {
+    const styles = readFileSync(new URL('./ShareButton.module.css', import.meta.url), 'utf8');
+    expect(styles).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(styles).toContain('share-dialog-out');
   });
 
   it('does not render controls without a public URL', () => {

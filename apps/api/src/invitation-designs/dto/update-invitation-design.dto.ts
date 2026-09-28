@@ -132,8 +132,8 @@ export class InvitationElementDto {
   @Transform(trim)
   @IsString()
   @Length(1, 1000)
-  @Matches(/^(https?:\/\/\S+|media:\/\/[0-9a-fA-F-]{36})$/, {
-    message: 'imageUrl must be an http(s) URL or a media:// reference.',
+  @Matches(/^(https?:\/\/\S+|(?:image|media):\/\/[0-9a-fA-F-]{36})$/, {
+    message: 'imageUrl must be an http(s) URL or an invitation image reference.',
   })
   imageUrl?: string;
 

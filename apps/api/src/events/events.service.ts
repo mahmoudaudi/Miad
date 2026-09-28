@@ -99,7 +99,9 @@ export class EventsService {
       where: { id, userId },
       select: {
         id: true,
-        invitation: { select: { id: true, media: { select: { fileUrl: true } } } },
+        invitation: {
+          select: { id: true, images: { select: { userId: true, fileUrl: true } } },
+        },
       },
     });
     if (!event) throw new NotFoundException('Event not found.');
@@ -112,7 +114,7 @@ export class EventsService {
         }
         await this.invitations.deleteInvitationSubtree(
           event.invitation.id,
-          event.invitation.media
+          event.invitation.images
         );
       }
       const deleted = await this.prisma.event.deleteMany({ where: { id, userId } });

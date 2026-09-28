@@ -4,13 +4,13 @@ import type { Request, Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import { htmlContentSecurityPolicy, renderHtmlDocument } from './html-artifact';
 import { InvitationDesignsService } from './invitation-designs.service';
-import { MediaService } from '../media/media.service';
+import { InvitationImagesService } from '../invitation-images/invitation-images.service';
 
 @Controller({ path: 'public/invitations', version: '1' })
 export class PublicInvitationsController {
   constructor(
     private readonly designs: InvitationDesignsService,
-    private readonly media: MediaService
+    private readonly images: InvitationImagesService
   ) {}
 
   @Get(':slug/render')
@@ -18,7 +18,12 @@ export class PublicInvitationsController {
   async renderPublished(@Param('slug') slug: string, @Res() res: Response): Promise<void> {
     const artifact = await this.designs.findPublishedRenderable(slug);
     const nonce = randomBytes(18).toString('base64url');
-    const document = renderHtmlDocument(artifact, nonce);
+    const document = renderHtmlDocument(
+      artifact,
+      nonce,
+      (imageId) =>
+        `/api/public/invitations/${encodeURIComponent(slug)}/images/${encodeURIComponent(imageId)}`
+    );
     res.set({
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Security-Policy': htmlContentSecurityPolicy(nonce),
@@ -43,16 +48,16 @@ export class PublicInvitationsController {
    * Public photo bytes for published invitations. Long-lived cache is safe:
    * storage object paths are unique and never reused.
    */
-  @Get(':slug/media/:mediaId/content')
+  @Get(':slug/images/:imageId/content')
   @Throttle({ default: { ttl: 60000, limit: 60 } })
   @Header('Cache-Control', 'public, max-age=3600')
-  async servePublicMedia(
+  async servePublicImage(
     @Param('slug') slug: string,
-    @Param('mediaId') mediaId: string,
+    @Param('imageId') imageId: string,
     @Res({ passthrough: true }) res: Response
   ): Promise<void> {
-    const file = await this.media.downloadPublicMedia(slug, mediaId);
-    if (!file) throw new NotFoundException('Media not found.');
+    const file = await this.images.downloadPublicImage(slug, imageId);
+    if (!file) throw new NotFoundException('Image not found.');
     res.set('Content-Type', file.fileType);
     res.send(Buffer.from(file.bytes));
   }

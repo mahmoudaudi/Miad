@@ -61,6 +61,22 @@ describe('AuthController Google OAuth callback', () => {
     expect(redirect).toHaveBeenCalledWith(`${frontendUrl}/dashboard/invitations/new`);
   });
 
+  it('redirects an admin Google sign-in to the admin portal', async () => {
+    const { controller } = makeController(
+      jest.fn().mockResolvedValue({ user: { role: 'admin' }, tokens })
+    );
+    const state = stateValue('admin-nonce');
+    const redirect = jest.fn();
+    await controller.googleCallback(
+      'google-authorization-code',
+      state,
+      { cookies: { oauth_state: state } } as never,
+      { cookie: jest.fn(), redirect, clearCookie: jest.fn() } as never
+    );
+
+    expect(redirect).toHaveBeenCalledWith(`${frontendUrl}/admin`);
+  });
+
   it('returns invalid callback attempts to login with a generic error marker', async () => {
     const { controller, loginWithGoogle } = makeController();
     const redirect = jest.fn();

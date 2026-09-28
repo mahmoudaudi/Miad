@@ -4,7 +4,7 @@ const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2';
 
 /**
- * Photo source bar for the AI studio: upload your own photo (signed media
+ * Photo source bar for the AI studio: upload your own photo (signed invitation image
  * flow) or paste an internet image link. Which source fits depends on the
  * invitation — the hint is contextual per event type.
  */

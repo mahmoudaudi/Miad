@@ -1,17 +1,19 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import React, { useState } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountMenu } from '@/components/ui/AccountMenu';
-import { Popover } from '@/components/ui/Popover';
 import { ShareButton } from '@/components/ui/ShareButton';
-import { formatEventDate } from '@/lib/events';
+import { ApiError } from '@/lib/api-client';
+import { aiStudioProjectHref } from '@/lib/ai-studio';
+import { listInvitations, type InvitationRecord } from '@/lib/invitations';
 import type { HtmlDesignArtifact, InvitationDesignSpecification } from '@/lib/invitation-designs';
 import { GenerationFailedNotice } from './GenerationFailedNotice';
 import { HtmlInvitationFrame } from './HtmlInvitationFrame';
 import { InvitationCanvas } from './InvitationCanvas';
 import { SmartQuestionCard } from './SmartQuestionCard';
 import type { AiGenerationProgress, SmartQuestion } from '@/lib/ai-studio';
+import type { AiStudioModelOption } from '@/lib/ai-studio';
 
 export type StudioMessage = { role: 'user' | 'ai'; text: string };
 
@@ -27,113 +29,37 @@ export type StudioProfile = {
 export type StudioRecentInvitation = {
   id: string;
   title: string;
-  eventDate: string;
-  status: string;
-  updatedAt: string;
-  hasDesign: boolean;
 };
 
-export type StudioPreview =
-  | { status: 'empty' }
-  | { status: 'working'; operation?: 'generate' | 'refine' }
+export type StudioImageUpload = {
+  images: Array<{ id: string; fileName: string; previewUrl: string | null }>;
+  uploading: boolean;
+  progress: number | null;
+  notice: string | null;
+  disabled: boolean;
+  onFiles: (files: File[]) => void;
+  onRemove: (imageId: string) => void;
+};
+
+export type StudioReadyPreview =
   | {
       status: 'ready';
       title: string;
       specification: InvitationDesignSpecification;
       renderUrl?: never;
     }
-  | { status: 'ready'; title: string; artifact: HtmlDesignArtifact; renderUrl: string }
+  | { status: 'ready'; title: string; artifact: HtmlDesignArtifact; renderUrl: string };
+
+export type StudioPreview =
+  | { status: 'empty' }
+  | { status: 'working'; operation?: 'generate' | 'refine'; previous?: StudioReadyPreview }
+  | StudioReadyPreview
   | { status: 'failed' };
-
-export function isValidEditInstruction(value: string): boolean {
-  const length = value.trim().length;
-  return length >= 3 && length <= 1000;
-}
-
-export function EditDesignDialog({
-  onCancel,
-  onRegenerate,
-}: {
-  onCancel: () => void;
-  onRegenerate: (instruction: string) => void;
-}) {
-  const [instruction, setInstruction] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <form
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="edit-design-title"
-        onSubmit={(event: React.FormEvent<HTMLFormElement>) => {
-          event.preventDefault();
-          if (!isValidEditInstruction(instruction)) {
-            setError('Enter a design change using 3 to 1000 characters.');
-            return;
-          }
-          onRegenerate(instruction.trim());
-        }}
-        className="animate-modal-pop w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-lift sm:p-6"
-      >
-        <h2 id="edit-design-title" className="font-display text-headline-sm text-ink">
-          Edit design
-        </h2>
-        <p className="mt-2 text-body-sm text-muted">
-          Describe the visual change. Your event details will stay the same.
-        </p>
-        <label htmlFor="edit-design-instruction" className="mt-5 block text-label-md text-ink">
-          What would you like to change?
-        </label>
-        <textarea
-          id="edit-design-instruction"
-          autoFocus
-          rows={4}
-          maxLength={1000}
-          value={instruction}
-          onChange={(event) => {
-            setInstruction(event.target.value);
-            setError(null);
-          }}
-          placeholder="Make the background lighter and use emerald green accents."
-          className="miad-input mt-2 min-h-28 resize-y"
-          aria-invalid={Boolean(error)}
-          aria-describedby={error ? 'edit-design-error' : undefined}
-        />
-        {error && (
-          <p
-            id="edit-design-error"
-            role="alert"
-            className="miad-feedback-enter mt-2 text-body-sm text-error"
-          >
-            {error}
-          </p>
-        )}
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="min-h-10 rounded-xl border border-line px-4 text-label-md text-ink"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="min-h-10 rounded-xl bg-primary px-4 text-label-md text-white"
-          >
-            Regenerate design
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
 
 const workspaceLinks = [
   { href: '/dashboard/invitations/new', label: 'AI Studio', icon: 'auto_awesome' },
   { href: '/dashboard/invitations', label: 'Invitations', icon: 'mail' },
   { href: '/dashboard/community/browse', label: 'Community', icon: 'public' },
-  { href: '/dashboard/community', label: 'My designs', icon: 'collections_bookmark' },
-  { href: '/dashboard/events', label: 'Events', icon: 'event' },
   { href: '/dashboard/billing', label: 'Billing', icon: 'payments' },
 ] as const;
 
@@ -189,6 +115,149 @@ function WorkspaceNavigation({ collapsed = false }: { collapsed?: boolean }) {
   );
 }
 
+type SidebarProject = { id: string; title: string };
+
+export type MyProjectsState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; projects: SidebarProject[] };
+
+export function studioProjectHref(invitationId: string): string {
+  return aiStudioProjectHref(invitationId);
+}
+
+export function isStudioProjectActive(
+  pathname: string | null,
+  activeInvitationId: string | null,
+  projectId: string
+): boolean {
+  return pathname?.replace(/\/+$/, '') === studioHref && activeInvitationId === projectId;
+}
+
+export function MyProjectsList({
+  state,
+  pathname,
+  activeInvitationId,
+  collapsed,
+  onRetry,
+}: {
+  state: MyProjectsState;
+  pathname: string | null;
+  activeInvitationId: string | null;
+  collapsed: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <section
+      aria-labelledby="my-projects-heading"
+      className="mt-5 min-h-0 border-t border-[#e5e7eb] pt-4"
+    >
+      <h2
+        id="my-projects-heading"
+        className={`mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#71717a] ${collapsed ? 'sr-only' : ''}`}
+      >
+        MY PROJECTS
+      </h2>
+      {state.status === 'loading' && (
+        <ul aria-label="Loading projects" className="max-h-56 space-y-1 overflow-y-auto">
+          {[0, 1, 2].map((index) => (
+            <li key={index} className="flex min-h-9 items-center gap-2 rounded-md px-2">
+              <span className="size-4 shrink-0 animate-pulse rounded bg-[#e5e7eb]" />
+              {!collapsed && <span className="h-3 w-3/4 animate-pulse rounded bg-[#e5e7eb]" />}
+            </li>
+          ))}
+        </ul>
+      )}
+      {state.status === 'error' && (
+        <div className={`px-2 py-2 text-[11px] text-[#71717a] ${collapsed ? 'text-center' : ''}`}>
+          {!collapsed && <p role="alert">{state.message}</p>}
+          <button
+            type="button"
+            onClick={onRetry}
+            aria-label="Retry loading projects"
+            title="Retry loading projects"
+            className={`mt-1 rounded px-1.5 py-1 font-medium text-[#9f1239] transition-colors hover:bg-[#f4f4f5] ${focusRing}`}
+          >
+            {collapsed ? '↻' : 'Retry'}
+          </button>
+        </div>
+      )}
+      {state.status === 'ready' && state.projects.length === 0 && (
+        <p className={`px-2 py-2 text-[11px] text-[#71717a] ${collapsed ? 'sr-only' : ''}`}>
+          No projects yet.
+        </p>
+      )}
+      {state.status === 'ready' && state.projects.length > 0 && (
+        <ul
+          aria-label="My projects"
+          className="max-h-56 space-y-1 overflow-y-auto overscroll-contain"
+        >
+          {state.projects.map((project) => {
+            const active = isStudioProjectActive(pathname, activeInvitationId, project.id);
+            return (
+              <li key={project.id}>
+                <Link
+                  href={studioProjectHref(project.id)}
+                  aria-current={active ? 'page' : undefined}
+                  aria-label={project.title}
+                  title={project.title}
+                  className={`flex min-h-9 items-center gap-2 rounded-md px-2 text-[11px] transition-colors ${focusRing} ${
+                    active
+                      ? 'bg-[#e5e7eb] font-semibold text-[#20242a]'
+                      : 'font-normal text-[#52525b] hover:bg-[#f4f4f5] hover:text-[#20242a]'
+                  } ${collapsed ? 'justify-center' : ''}`}
+                >
+                  <span
+                    className={`material-symbols-outlined shrink-0 text-[16px] ${
+                      active ? 'text-[#9f1239]' : 'text-[#a1a1aa]'
+                    }`}
+                    aria-hidden="true"
+                  >
+                    mail
+                  </span>
+                  {!collapsed && <span className="min-w-0 truncate">{project.title}</span>}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function useMyProjects() {
+  const [state, setState] = useState<MyProjectsState>({ status: 'loading' });
+  const load = useCallback(async () => {
+    setState({ status: 'loading' });
+    try {
+      const invitations: InvitationRecord[] = await listInvitations();
+      setState({
+        status: 'ready',
+        projects: invitations.map((invitation) => ({
+          id: invitation.id,
+          title: invitation.event.title,
+        })),
+      });
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 401) {
+        if (typeof window !== 'undefined') {
+          window.location.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
+        }
+        return;
+      }
+      setState({
+        status: 'error',
+        message: caught instanceof ApiError ? caught.message : 'Projects could not be loaded.',
+      });
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  return { state, load };
+}
+
 function MobileWorkspaceMenu({}: {}) {
   return (
     <details className="group relative lg:hidden">
@@ -219,14 +288,14 @@ function MobileWorkspaceMenu({}: {}) {
 }
 
 export function StudioHeader({
-  manualHref,
+  invitationsHref,
   detailsHref,
   publishUrl = null,
   publishing = false,
   publicationPending = false,
   onPublish = () => undefined,
 }: {
-  manualHref: string;
+  invitationsHref: string;
   detailsHref: string | null;
   publishUrl?: string | null;
   publishing?: boolean;
@@ -236,8 +305,8 @@ export function StudioHeader({
   const publishHref = detailsHref ?? '/dashboard/invitations';
   const pathname = usePathname();
   const studioTabs = [
-    { href: '/dashboard/invitations', label: 'Design', chevron: false },
-    { href: studioHref, label: 'Build', chevron: true },
+    { href: '/dashboard/invitations', label: 'Invitations', chevron: false },
+    { href: studioHref, label: 'AI Studio', chevron: true },
   ] as const;
   return (
     <header className="sticky top-0 z-40 grid h-12 grid-cols-[minmax(0,1fr)_auto] border-b border-[#cfd4da] bg-[#f8fafc] lg:grid-cols-[224px_430px_minmax(0,1fr)]">
@@ -282,13 +351,13 @@ export function StudioHeader({
         </div>
         <div className="flex items-center gap-2">
           <Link
-            href={manualHref}
+            href={invitationsHref}
             className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-[#4b5563] transition-colors hover:bg-[#e9edf2] hover:text-[#20242a] ${focusRing}`}
           >
             <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
               build
             </span>
-            Tools
+            Invitations
           </Link>
           <span className="flex h-7 items-center gap-1.5 rounded-md border border-[#d7dbe0] bg-[#e5e7eb]/60 px-2.5 text-[11px] font-semibold text-[#343a42]">
             <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
@@ -299,15 +368,6 @@ export function StudioHeader({
         </div>
       </div>
       <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 px-3">
-        <Link
-          href="/dashboard/invitations"
-          className={`hidden h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-[#4b5563] transition-colors hover:bg-[#e9edf2] hover:text-[#20242a] md:flex ${focusRing}`}
-        >
-          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-            person_add
-          </span>
-          Invite
-        </Link>
         {detailsHref && (!publishUrl || publicationPending) && (
           <button
             type="button"
@@ -350,12 +410,10 @@ export function isSidebarNarrow(collapsed: boolean, peek: boolean): boolean {
 }
 
 export function StudioSidebar({
-  manualHref,
   profile,
   loggingOut = false,
   onLogout,
 }: {
-  manualHref: string;
   profile: StudioProfile;
   loggingOut?: boolean;
   onLogout?: () => void;
@@ -365,6 +423,9 @@ export function StudioSidebar({
   // overwriting that choice: leaving the profile narrows it again.
   const [collapsed, setCollapsed] = useState(false);
   const [peek, setPeek] = useState(false);
+  const pathname = usePathname();
+  const activeInvitationId = useSearchParams()?.get('invitationId') ?? null;
+  const { state: projectsState, load: reloadProjects } = useMyProjects();
   const narrow = isSidebarNarrow(collapsed, peek);
   // Built outside JSX so the class attribute only ever carries real class names;
   // interpolating a ternary inline would leak `collapsed ? '…' : ''` as dead classes.
@@ -418,7 +479,7 @@ export function StudioSidebar({
         <div className="mb-4 px-0.5">
           <Link
             href="/dashboard/invitations/new"
-            aria-label="New invitation"
+            aria-label="Create an invitation with AI"
             className={`flex min-h-11 w-full items-center rounded-lg border border-[#e4e4e7] bg-white text-xs font-medium text-[#27272a] shadow-sm transition hover:bg-[#fafafa] ${focusRing} ${newLinkClass}`}
           >
             <span
@@ -427,10 +488,17 @@ export function StudioSidebar({
             >
               +
             </span>
-            {!narrow && <span>New</span>}
+            {!narrow && <span>Create with AI</span>}
           </Link>
         </div>
         <WorkspaceNavigation collapsed={narrow} />
+        <MyProjectsList
+          state={projectsState}
+          pathname={pathname}
+          activeInvitationId={activeInvitationId}
+          collapsed={narrow}
+          onRetry={() => void reloadProjects()}
+        />
       </div>
       {/* Hovering (or focusing) the profile peeks the full sidebar open. It widens to
           the right, so the profile stays under the cursor and the reveal is stable
@@ -459,25 +527,32 @@ export function StudioSidebar({
 export function AiStudioWorkspaceChrome({
   children,
   profile,
+  showHeader = true,
   loggingOut = false,
   onLogout,
 }: {
   children: React.ReactNode;
   profile: StudioProfile;
+  showHeader?: boolean;
   loggingOut?: boolean;
   onLogout?: () => void;
 }) {
   return (
-    <main className="min-h-[100dvh] bg-[#f5f0f1] text-[#2d1f23]">
-      <StudioHeader manualHref="/dashboard/events/new" detailsHref={null} />
-      <div className="lg:grid lg:min-h-[calc(100dvh-48px)] lg:grid-cols-[auto_minmax(0,1fr)]">
-        <StudioSidebar
-          manualHref="/dashboard/events/new"
-          profile={profile}
-          loggingOut={loggingOut}
-          onLogout={onLogout}
-        />
-        <section className="min-w-0 bg-[#f5f0f1] px-3 py-4 sm:px-5 lg:px-8 lg:py-6">
+    <main className="miad-studio-theme min-h-[100dvh] bg-[#f1f3f5] text-[#20242a]">
+      {showHeader ? (
+        <StudioHeader invitationsHref="/dashboard/invitations" detailsHref={null} />
+      ) : (
+        <div className="flex h-12 items-center justify-end border-b border-[#ececee] bg-[#fbfbfb] px-3 lg:hidden">
+          <MobileWorkspaceMenu />
+        </div>
+      )}
+      <div
+        className={`lg:grid lg:grid-cols-[auto_minmax(0,1fr)] ${
+          showHeader ? 'lg:min-h-[calc(100dvh-48px)]' : 'lg:min-h-[100dvh]'
+        }`}
+      >
+        <StudioSidebar profile={profile} loggingOut={loggingOut} onLogout={onLogout} />
+        <section className="min-w-0 bg-[#f1f3f5] px-3 py-4 sm:px-5 lg:px-8 lg:py-6">
           {children}
         </section>
       </div>
@@ -485,29 +560,7 @@ export function AiStudioWorkspaceChrome({
   );
 }
 
-const relativeTimeUnits: [Intl.RelativeTimeFormatUnit, number][] = [
-  ['year', 365 * 24 * 60 * 60 * 1000],
-  ['month', 30 * 24 * 60 * 60 * 1000],
-  ['week', 7 * 24 * 60 * 60 * 1000],
-  ['day', 24 * 60 * 60 * 1000],
-  ['hour', 60 * 60 * 1000],
-  ['minute', 60 * 1000],
-];
-
-/** "2 hours ago" from the invitation's real createdAt, not a fixture. */
-function formatRelativeSince(value: string, now: number): string {
-  const created = Date.parse(value);
-  if (Number.isNaN(created)) return '';
-  const elapsed = now - created;
-  if (elapsed < 60 * 1000) return 'just now';
-  const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-  for (const [unit, ms] of relativeTimeUnits) {
-    if (elapsed >= ms) return relative.format(-Math.floor(elapsed / ms), unit);
-  }
-  return relative.format(-Math.floor(elapsed / 1000), 'second');
-}
-
-function RecentProjectCards({
+function RecentProjectTitles({
   invitations,
   loading,
 }: {
@@ -518,172 +571,39 @@ function RecentProjectCards({
     <section aria-labelledby="studio-recent-heading" aria-busy={loading}>
       <h3
         id="studio-recent-heading"
-        className="mb-3 text-xs font-medium tracking-wide text-[#71717a]"
+        className="mb-3 text-center text-xs font-medium tracking-wide text-[#71717a]"
       >
         Recent projects
       </h3>
       {loading ? (
-        <ul
-          aria-label="Loading recent projects"
-          className="grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
-        >
+        <ul aria-label="Loading recent projects" className="flex max-w-full gap-3 overflow-hidden">
           {[0, 1, 2].map((index) => (
             <li
               key={index}
-              className="animate-pulse overflow-hidden rounded-xl border border-[#e4e4e7] bg-white shadow-sm"
+              className="flex min-h-12 w-[min(58vw,13rem)] shrink-0 items-center rounded-lg border border-[#e4e4e7] bg-white px-3"
             >
-              <div className="aspect-[4/3] bg-[#f1f3f5]" />
-              <div className="space-y-2 p-4">
-                <div className="h-4 w-2/3 rounded bg-[#e5e7eb]" />
-                <div className="h-3 w-1/2 rounded bg-[#e5e7eb]" />
-              </div>
+              <span className="h-3 w-40 animate-pulse rounded bg-[#e5e7eb]" />
             </li>
           ))}
         </ul>
       ) : invitations.length === 0 ? (
-        <div className="flex min-h-28 max-w-5xl items-center gap-4 rounded-xl border border-dashed border-[#d4d4d8] bg-white/75 px-5 py-5 sm:px-6">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#fff1f2] text-[#9f1239]">
-            <span className="material-symbols-outlined text-xl" aria-hidden="true">
-              auto_awesome
-            </span>
-          </span>
-          <span>
-            <span className="block text-sm font-semibold text-[#27272a]">No projects yet</span>
-            <span className="mt-1 block text-xs text-[#71717a]">
-              Your invitations will appear here once you create your first one.
-            </span>
-          </span>
+        <div className="max-w-5xl border-t border-[#ececee] py-3 text-xs text-[#71717a]">
+          No projects yet.
         </div>
       ) : (
-        <ul className="grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {invitations.map((invitation) => {
-            const updated = formatRelativeSince(invitation.updatedAt, Date.now());
-            const published = invitation.status === 'PUBLISHED';
-            return (
-              <li key={invitation.id}>
-                <Link
-                  href={`/dashboard/invitations/${invitation.id}/editor`}
-                  aria-label={`Open or edit ${invitation.title}`}
-                  className={`group block min-w-0 overflow-hidden rounded-xl border border-line bg-surface shadow-subtle transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-lift ${focusRing}`}
-                >
-                  <div className="relative aspect-[4/3] overflow-hidden bg-[#f3f4f6]">
-                    {invitation.hasDesign ? (
-                      <HtmlInvitationFrame
-                        src={`/api/designs/${encodeURIComponent(invitation.id)}/render`}
-                        title={`${invitation.title} invitation preview`}
-                        className="pointer-events-none h-full w-full"
-                      />
-                    ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-2 text-[#71717a]">
-                        <span className="material-symbols-outlined text-3xl" aria-hidden="true">
-                          mail
-                        </span>
-                        <span className="text-xs">Design preview coming soon</span>
-                      </div>
-                    )}
-                    <span
-                      className={`absolute start-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-semibold shadow-sm ${published ? 'bg-emerald-50 text-emerald-800' : 'bg-white/95 text-[#52525b]'}`}
-                    >
-                      {published ? 'Published' : 'Draft'}
-                    </span>
-                  </div>
-                  <div className="flex min-h-[92px] items-start justify-between gap-3 px-4 py-3">
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium text-[#27272a]">
-                        {invitation.title}
-                      </span>
-                      <span className="mt-1 block truncate text-xs text-[#71717a]">
-                        {formatEventDate(invitation.eventDate)}
-                      </span>
-                      <span className="mt-1 block text-[11px] text-[#a1a1aa]">
-                        Updated {updated || 'recently'}
-                      </span>
-                    </span>
-                    <span className="shrink-0 self-end text-xs font-semibold text-[#9f1239] transition-transform duration-200 group-hover:translate-x-0.5">
-                      Open/Edit
-                    </span>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
+        <ul className="flex max-w-full gap-3 overflow-x-auto overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:justify-center">
+          {invitations.slice(0, 3).map((invitation) => (
+            <li key={invitation.id} className="w-[min(58vw,13rem)] shrink-0">
+              <Link
+                href={studioProjectHref(invitation.id)}
+                aria-label={`Open ${invitation.title}`}
+                className={`flex min-h-12 items-center rounded-lg border border-[#e4e4e7] bg-white px-3 text-xs font-medium text-[#27272a] shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-[#d4d4d8] hover:shadow-md ${focusRing}`}
+              >
+                <span className="min-w-0 truncate">{invitation.title}</span>
+              </Link>
+            </li>
+          ))}
         </ul>
-      )}
-    </section>
-  );
-}
-
-const ATTACH_ACCEPT = 'image/jpeg,image/png,image/webp';
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/**
- * Attachment panel for the new chat. Media is owned by an invitation, which does not
- * exist until the first generation, so a chosen file is validated here and held by
- * the client, then uploaded for real once that invitation appears.
- */
-export function AttachPanel({
-  onAttachFile,
-  canAttach,
-  pendingUpload = null,
-  notice = null,
-  id,
-}: {
-  onAttachFile?: (file: File) => void;
-  canAttach: boolean;
-  pendingUpload?: { name: string; size: number; type: string } | null;
-  notice?: string | null;
-  id: string;
-}) {
-  return (
-    <section
-      aria-label="Attach a photo"
-      className="rounded-xl border border-[#e4e4e7] bg-white p-3"
-    >
-      {pendingUpload ? (
-        <p className="flex items-center gap-2 text-[11px] text-[#3f3f46]">
-          <span className="material-symbols-outlined text-[15px] text-[#9f1239]" aria-hidden="true">
-            image
-          </span>
-          <span className="min-w-0 truncate font-medium">{pendingUpload.name}</span>
-          <span className="shrink-0 text-[#a1a1aa]">{formatBytes(pendingUpload.size)}</span>
-        </p>
-      ) : (
-        <label
-          className={`flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-[#d4d4d8] px-3 text-[11px] font-medium text-[#52525b] transition-colors hover:border-[#a1a1aa] hover:bg-[#fafafa] ${
-            canAttach ? '' : 'pointer-events-none opacity-50'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-            add_photo_alternate
-          </span>
-          Choose a photo
-          <input
-            id={id}
-            type="file"
-            accept={ATTACH_ACCEPT}
-            disabled={!canAttach}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              if (file) onAttachFile?.(file);
-            }}
-            className="sr-only"
-          />
-        </label>
-      )}
-      <p className="mt-2 text-[10px] leading-4 text-[#a1a1aa]">
-        JPEG, PNG or WebP, up to 6 MB.
-        {pendingUpload && ' It uploads as soon as your first invitation is created.'}
-      </p>
-      {notice && (
-        <p role="status" className="mt-1.5 text-[11px] text-[#9f1239]">
-          {notice}
-        </p>
       )}
     </section>
   );
@@ -711,7 +631,7 @@ function StudioLanding({
   return (
     <div className="miad-studio-glow flex flex-col overflow-y-auto px-5 py-7 sm:px-8 lg:px-10">
       <div className="mx-auto w-full max-w-5xl">
-        <RecentProjectCards invitations={recentInvitations} loading={recentProjectsLoading} />
+        <RecentProjectTitles invitations={recentInvitations} loading={recentProjectsLoading} />
       </div>
       <div className="mx-auto my-auto flex w-full max-w-2xl flex-col items-start py-10">
         <h1 className="mb-6 text-[26px] font-bold leading-tight tracking-tight text-[#18181b] sm:text-[31px]">
@@ -767,7 +687,7 @@ function MessageStream({
   messages,
   generationProgress,
   failedMessage,
-  editorHref,
+  studioHref,
   imageBar,
   showImageBar,
   questionPhase,
@@ -779,7 +699,7 @@ function MessageStream({
   messages: StudioMessage[];
   generationProgress: AiGenerationProgress | null;
   failedMessage: string | null;
-  editorHref: string | null;
+  studioHref: string | null;
   imageBar: React.ReactNode;
   showImageBar: boolean;
   questionPhase: StudioQuestionPhase;
@@ -842,8 +762,8 @@ function MessageStream({
       {!question && questionPhase !== 'ANALYZING_PROMPT' && generationProgress && (
         <GenerationProgress progress={generationProgress} />
       )}
-      {failedMessage && editorHref && (
-        <GenerationFailedNotice message={failedMessage} editorHref={editorHref} />
+      {failedMessage && studioHref && (
+        <GenerationFailedNotice message={failedMessage} studioHref={studioHref} />
       )}
       {showImageBar && imageBar}
     </div>
@@ -853,10 +773,16 @@ function MessageStream({
 const progressLabels: Record<AiGenerationProgress['stage'], string> = {
   REQUEST_RECEIVED: 'Request received',
   ANALYZING_EVENT: 'Understanding your event',
-  GENERATING_WEBSITE: 'Generating your website',
-  PARSING_RESPONSE: 'Reading the website response',
-  VALIDATING_WEBSITE: 'Checking the generated website',
+  GENERATING_WEBSITE: 'Generating your design with Stitch',
+  PARSING_RESPONSE: 'Reading your Stitch design',
+  VALIDATING_WEBSITE: 'Checking and sanitizing your design',
   SAVING_WEBSITE: 'Saving your invitation',
+  REFINEMENT_UNDERSTANDING: 'Understanding your request',
+  REFINEMENT_INSPECTING: 'Inspecting the current invitation',
+  REFINEMENT_APPLYING: 'Applying the requested changes',
+  REFINEMENT_VALIDATING: 'Validating the updated design',
+  REFINEMENT_SAVING: 'Saving the new invitation version',
+  REFINEMENT_PREVIEW_UPDATED: 'Updating the preview',
   COMPLETED: 'Invitation ready',
 };
 
@@ -867,20 +793,31 @@ const visibleProgressStages: AiGenerationProgress['stage'][] = [
   'VALIDATING_WEBSITE',
   'SAVING_WEBSITE',
 ];
+const visibleRefinementStages: AiGenerationProgress['stage'][] = [
+  'REFINEMENT_UNDERSTANDING',
+  'REFINEMENT_INSPECTING',
+  'REFINEMENT_APPLYING',
+  'REFINEMENT_VALIDATING',
+  'REFINEMENT_SAVING',
+  'REFINEMENT_PREVIEW_UPDATED',
+];
 
 function GenerationProgress({ progress }: { progress: AiGenerationProgress }) {
-  const currentIndex = visibleProgressStages.indexOf(progress.stage);
+  const isRefinement =
+    progress.operation === 'refinement' || progress.stage.startsWith('REFINEMENT_');
+  const stages = isRefinement ? visibleRefinementStages : visibleProgressStages;
+  const currentIndex = stages.indexOf(progress.stage);
   return (
     <section
       aria-live="polite"
-      aria-label="Website generation progress"
+      aria-label={isRefinement ? 'Invitation refinement progress' : 'Website generation progress'}
       className="me-auto max-w-[92%] rounded-lg border border-[#dbe1e8] bg-white px-3 py-2.5 text-[12px] text-[#343a42] shadow-[0_1px_2px_rgba(15,23,42,0.05)]"
     >
       <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#c2410c]">
-        Website generation
+        {isRefinement ? 'Updating your invitation' : 'Website generation'}
       </p>
       <ul className="space-y-1.5">
-        {visibleProgressStages.map((stage, index) => {
+        {stages.map((stage, index) => {
           const isCurrent = stage === progress.stage;
           const isDone =
             progress.status === 'COMPLETED' || (currentIndex >= 0 && index < currentIndex);
@@ -902,7 +839,9 @@ function GenerationProgress({ progress }: { progress: AiGenerationProgress }) {
                 {isFailed ? '✕' : isDone ? '✓' : isCurrent ? '●' : '○'}
               </span>
               <span className={isCurrent ? 'font-semibold text-[#20242a]' : ''}>
-                {progressLabels[stage]}
+                {stage === 'COMPLETED' && isRefinement
+                  ? 'Invitation updated'
+                  : progressLabels[stage]}
               </span>
             </li>
           );
@@ -914,6 +853,156 @@ function GenerationProgress({ progress }: { progress: AiGenerationProgress }) {
         </p>
       )}
     </section>
+  );
+}
+
+export function ModelPicker({
+  modelOptions,
+  modelPreference,
+  modelSelectionLoading,
+  modelSelectionOperation,
+  onModelPreferenceChange,
+  initialOpen = false,
+}: {
+  modelOptions: AiStudioModelOption[];
+  modelPreference: string;
+  modelSelectionLoading: boolean;
+  modelSelectionOperation: AiStudioModelOption['operations'][number];
+  onModelPreferenceChange: (value: string) => void;
+  initialOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(initialOpen);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const eligible = modelOptions.filter((model) =>
+    model.operations.includes(modelSelectionOperation)
+  );
+  const selected =
+    modelPreference === 'auto' ? null : eligible.find((model) => model.id === modelPreference);
+  const label = modelPreference === 'auto' ? 'Auto' : (selected?.name ?? modelPreference);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  function choose(value: string) {
+    onModelPreferenceChange(value);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        disabled={modelSelectionLoading}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Choose AI model"
+        title="Choose AI model"
+        className={`inline-flex h-8 max-w-44 items-center gap-1 rounded-full border border-[#d7dbe0] bg-[#f8fafc] px-2.5 text-[12px] font-medium text-[#343a42] transition hover:bg-[#f4f4f5] focus:outline-none focus:ring-2 focus:ring-[#9f1239]/15 disabled:cursor-wait disabled:opacity-60`}
+      >
+        <span
+          className="material-symbols-outlined shrink-0 text-[16px] text-[#9f1239]"
+          aria-hidden="true"
+        >
+          auto_awesome
+        </span>
+        <span className="truncate">{modelSelectionLoading ? '…' : label}</span>
+        <span
+          className="material-symbols-outlined shrink-0 text-[16px] text-[#6b7280]"
+          aria-hidden="true"
+        >
+          expand_more
+        </span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          aria-label="AI models"
+          className="absolute bottom-full left-0 z-50 mb-2 max-h-64 w-64 overflow-y-auto rounded-xl border border-[#d7dbe0] bg-white p-1 shadow-lg"
+        >
+          <button
+            type="button"
+            role="option"
+            aria-selected={modelPreference === 'auto'}
+            onClick={() => choose('auto')}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-start transition hover:bg-[#f4f4f5]"
+          >
+            <span
+              className="material-symbols-outlined shrink-0 text-[16px] text-[#9f1239]"
+              aria-hidden="true"
+            >
+              auto_awesome
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12px] font-semibold text-[#27272a]">Auto</span>
+              <span className="block truncate text-[11px] text-[#6b7280]">
+                Let Stitch choose automatically
+              </span>
+            </span>
+            {modelPreference === 'auto' && (
+              <span
+                className="material-symbols-outlined shrink-0 text-[16px] text-[#9f1239]"
+                aria-hidden="true"
+              >
+                check
+              </span>
+            )}
+          </button>
+          {eligible.map((model) => {
+            const isSelected = modelPreference === model.id;
+            return (
+              <button
+                key={model.id}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                disabled={!model.available}
+                onClick={() => choose(model.id)}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-start transition hover:bg-[#f4f4f5] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span
+                  className="material-symbols-outlined shrink-0 text-[16px] text-[#9f1239]"
+                  aria-hidden="true"
+                >
+                  neurology
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] font-semibold text-[#27272a]">
+                    {model.name}
+                    {model.tier === 'premium' ? ' · Premium' : ''}
+                    {!model.available ? ' · Unavailable' : ''}
+                  </span>
+                  <span className="block truncate text-[11px] text-[#6b7280]">
+                    {model.description}
+                  </span>
+                </span>
+                {isSelected && (
+                  <span
+                    className="material-symbols-outlined shrink-0 text-[16px] text-[#9f1239]"
+                    aria-hidden="true"
+                  >
+                    check
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -930,8 +1019,12 @@ function PromptComposer({
   micSupported,
   listening,
   onToggleVoice,
-  attachPanel,
-  canAttach,
+  modelOptions,
+  modelPreference,
+  modelSelectionLoading,
+  modelSelectionOperation,
+  onModelPreferenceChange,
+  imageUpload,
 }: {
   prompt: string;
   hint: string | null;
@@ -945,8 +1038,12 @@ function PromptComposer({
   micSupported: boolean;
   listening: boolean;
   onToggleVoice: () => void;
-  attachPanel?: React.ReactNode;
-  canAttach?: boolean;
+  modelOptions: AiStudioModelOption[];
+  modelPreference: string;
+  modelSelectionLoading: boolean;
+  modelSelectionOperation: AiStudioModelOption['operations'][number];
+  onModelPreferenceChange: (value: string) => void;
+  imageUpload?: StudioImageUpload | null;
 }) {
   const card = variant === 'card';
   return (
@@ -981,6 +1078,43 @@ function PromptComposer({
             : 'rounded-lg border border-[#cfd4da] bg-white transition-colors focus-within:border-[#9f1239] focus-within:ring-2 focus-within:ring-[#9f1239]/15'
         }
       >
+        {imageUpload && imageUpload.images.length > 0 && (
+          <ul aria-label="Selected images" className="flex gap-2 overflow-x-auto p-2 pb-0">
+            {imageUpload.images.map((image) => (
+              <li
+                key={image.id}
+                className="relative size-16 shrink-0 overflow-hidden rounded-lg border border-[#d7dbe0] bg-[#f4f4f5]"
+              >
+                {image.previewUrl ? (
+                  // Signed previews are short-lived and intentionally never persisted.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={image.previewUrl}
+                    alt={image.fileName}
+                    className="size-full object-cover"
+                  />
+                ) : (
+                  <span className="flex size-full items-center justify-center text-[#71717a]">
+                    <span className="material-symbols-outlined" aria-hidden="true">
+                      image
+                    </span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove ${image.fileName}`}
+                  onClick={() => imageUpload.onRemove(image.id)}
+                  disabled={imageUpload.disabled || imageUpload.uploading}
+                  className="absolute end-1 top-1 flex size-6 items-center justify-center rounded-full bg-black/70 text-white disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[14px]" aria-hidden="true">
+                    close
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
           id="studio-prompt"
           value={prompt}
@@ -1019,24 +1153,30 @@ function PromptComposer({
               : 'flex min-h-11 items-center justify-between gap-2 border-t border-[#e5e7eb] px-2'
           }
         >
-          {card && attachPanel && (
-            <Popover
-              label="Attach a photo"
-              side="top"
-              align="start"
-              className="miad-attach"
-              triggerClassName={`!size-11 !min-h-11 !rounded-md !p-0 !text-[#a1a1aa] hover:!bg-[#f4f4f5] hover:!text-[#27272a] ${focusRing}`}
-              trigger={
-                <span
-                  className="miad-attach-icon material-symbols-outlined text-[18px]"
-                  aria-hidden="true"
-                >
-                  add
-                </span>
-              }
+          {imageUpload && (
+            <label
+              aria-label="Add images"
+              title="Add images"
+              className={`flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-[#71717a] transition-colors hover:bg-[#f4f4f5] hover:text-[#27272a] ${imageUpload.disabled || imageUpload.uploading || imageUpload.images.length >= 5 ? 'pointer-events-none opacity-45' : ''} ${focusRing}`}
             >
-              {attachPanel}
-            </Popover>
+              <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
+                add
+              </span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                className="sr-only"
+                disabled={
+                  imageUpload.disabled || imageUpload.uploading || imageUpload.images.length >= 5
+                }
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []);
+                  event.target.value = '';
+                  if (files.length) imageUpload.onFiles(files);
+                }}
+              />
+            </label>
           )}
           <span
             className={
@@ -1045,6 +1185,13 @@ function PromptComposer({
                 : 'flex min-w-0 items-center gap-1.5 text-[11px] text-[#6b7280]'
             }
           >
+            <ModelPicker
+              modelOptions={modelOptions}
+              modelPreference={modelPreference}
+              modelSelectionLoading={modelSelectionLoading}
+              modelSelectionOperation={modelSelectionOperation}
+              onModelPreferenceChange={onModelPreferenceChange}
+            />
             {micSupported && (
               <button
                 type="button"
@@ -1084,6 +1231,26 @@ function PromptComposer({
           </span>
         </div>
       </div>
+      {imageUpload?.uploading && imageUpload.progress !== null && (
+        <div
+          role="progressbar"
+          aria-label="Image upload progress"
+          aria-valuenow={imageUpload.progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          className="mt-2 h-1 overflow-hidden rounded bg-[#e5e7eb]"
+        >
+          <div
+            className="h-full origin-left bg-[#9f1239]"
+            style={{ transform: `scaleX(${imageUpload.progress / 100})` }}
+          />
+        </div>
+      )}
+      {imageUpload?.notice && (
+        <p role="status" className="mt-1.5 text-xs text-[#6b7280]">
+          {imageUpload.notice}
+        </p>
+      )}
       {hint && (
         <p
           id="studio-prompt-hint"
@@ -1105,7 +1272,7 @@ function AgentPanel({
   hint,
   sendDisabled,
   sendLabel,
-  editorHref,
+  studioHref,
   failedMessage,
   imageBar,
   questionPhase,
@@ -1119,6 +1286,12 @@ function AgentPanel({
   micSupported,
   listening,
   onToggleVoice,
+  modelOptions,
+  modelPreference,
+  modelSelectionLoading,
+  modelSelectionOperation,
+  onModelPreferenceChange,
+  imageUpload,
 }: Pick<
   React.ComponentProps<typeof AiStudioView>,
   | 'messages'
@@ -1128,7 +1301,7 @@ function AgentPanel({
   | 'hint'
   | 'sendDisabled'
   | 'sendLabel'
-  | 'editorHref'
+  | 'studioHref'
   | 'failedMessage'
   | 'imageBar'
   | 'questionPhase'
@@ -1142,6 +1315,12 @@ function AgentPanel({
   | 'micSupported'
   | 'listening'
   | 'onToggleVoice'
+  | 'modelOptions'
+  | 'modelPreference'
+  | 'modelSelectionLoading'
+  | 'modelSelectionOperation'
+  | 'onModelPreferenceChange'
+  | 'imageUpload'
 >) {
   const showImageBar = preview.status === 'ready' && 'specification' in preview;
   return (
@@ -1164,7 +1343,7 @@ function AgentPanel({
         messages={messages}
         generationProgress={generationProgress ?? null}
         failedMessage={failedMessage}
-        editorHref={editorHref}
+        studioHref={studioHref}
         imageBar={imageBar}
         showImageBar={showImageBar}
         questionPhase={questionPhase ?? 'IDLE'}
@@ -1185,6 +1364,12 @@ function AgentPanel({
         micSupported={micSupported ?? false}
         listening={listening ?? false}
         onToggleVoice={onToggleVoice ?? (() => undefined)}
+        modelOptions={modelOptions ?? []}
+        modelPreference={modelPreference ?? 'auto'}
+        modelSelectionLoading={modelSelectionLoading ?? false}
+        modelSelectionOperation={modelSelectionOperation ?? 'generation'}
+        onModelPreferenceChange={onModelPreferenceChange ?? (() => undefined)}
+        imageUpload={imageUpload}
       />
     </section>
   );
@@ -1192,22 +1377,23 @@ function AgentPanel({
 
 function CanvasPanel({
   preview,
-  editorHref,
+  projectLoading,
   detailsHref,
-  canEditDesign,
-  onEditDesign,
 }: {
   preview: StudioPreview;
-  editorHref: string | null;
+  projectLoading: boolean;
   detailsHref: string | null;
-  canEditDesign: boolean;
-  onEditDesign: () => void;
 }) {
-  const ready = preview.status === 'ready';
-  const legacy = ready && 'specification' in preview;
+  const readyPreview =
+    preview.status === 'ready'
+      ? preview
+      : preview.status === 'working'
+        ? preview.previous
+        : undefined;
   return (
     <section
       aria-label="Live invitation preview"
+      aria-busy={projectLoading || undefined}
       className="miad-studio-preview-enter flex min-h-[40rem] min-w-0 flex-col bg-[#e5e7eb] lg:h-full lg:min-h-0"
     >
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-[#cfd4da] bg-[#f3f4f6] px-3">
@@ -1215,34 +1401,11 @@ function CanvasPanel({
           desktop_windows
         </span>
         <h2 className="text-xs font-semibold text-[#343a42]">Canvas</h2>
-        {ready && (
-          <span className="min-w-0 truncate text-[11px] text-[#5f6670]">{preview.title}</span>
+        {readyPreview && (
+          <span className="min-w-0 truncate text-[11px] text-[#5f6670]">{readyPreview.title}</span>
         )}
         <div className="ms-auto flex shrink-0 items-center gap-1">
-          {ready && detailsHref && canEditDesign && (
-            <button
-              type="button"
-              onClick={onEditDesign}
-              className={`inline-flex min-h-11 items-center gap-1.5 rounded-md border border-[#cbd5e1] bg-white px-2.5 text-[11px] font-semibold text-[#3f4650] transition-colors hover:border-[#fda4af] hover:text-[#9f1239] ${focusRing}`}
-            >
-              <span className="material-symbols-outlined text-[17px]" aria-hidden="true">
-                tune
-              </span>
-              Edit design
-            </button>
-          )}
-          {legacy && editorHref && (
-            <Link
-              href={editorHref}
-              className={`inline-flex min-h-11 items-center gap-1.5 rounded-md border border-[#cbd5e1] bg-white px-2.5 text-[11px] font-semibold text-[#3f4650] transition-colors hover:border-[#fda4af] hover:text-[#9f1239] ${focusRing}`}
-            >
-              <span className="material-symbols-outlined text-[17px]" aria-hidden="true">
-                edit
-              </span>
-              Open editor
-            </Link>
-          )}
-          {ready && detailsHref && (
+          {readyPreview && detailsHref && (
             <Link
               href={detailsHref}
               className={`inline-flex min-h-11 items-center gap-1.5 rounded-md bg-[#9f1239] px-2.5 text-[11px] font-semibold text-white transition-colors hover:bg-[#881337] ${focusRing}`}
@@ -1255,24 +1418,30 @@ function CanvasPanel({
           )}
         </div>
       </header>
-      <div className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-3 sm:p-5">
+      <div className="relative flex min-h-0 flex-1 items-start justify-center overflow-auto p-3 sm:p-5">
         {preview.status === 'empty' && (
           <div className="flex min-h-[30rem] w-full max-w-[42rem] flex-col items-center justify-center rounded-lg border border-dashed border-[#aeb6c1] bg-[#edf0f3]/80 px-6 text-center">
             <span className="flex size-11 items-center justify-center rounded-md border border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]">
-              <span className="material-symbols-outlined text-[23px]" aria-hidden="true">
-                web
+              <span
+                className={`material-symbols-outlined text-[23px] ${projectLoading ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              >
+                {projectLoading ? 'progress_activity' : 'web'}
               </span>
             </span>
             <h3 className="mt-3 text-sm font-semibold text-[#343a42]">
-              Your invitation preview will appear here
+              {projectLoading
+                ? 'Opening your project…'
+                : 'Your invitation preview will appear here'}
             </h3>
             <p className="mt-1 max-w-sm text-[13px] leading-5 text-[#59616b]">
-              Ask Miad for an occasion, mood, and guest experience. The generated invitation stays
-              on this canvas.
+              {projectLoading
+                ? 'Loading your saved invitation and current design version.'
+                : 'Ask Miad for an occasion, mood, and guest experience. The generated invitation stays on this canvas.'}
             </p>
           </div>
         )}
-        {preview.status === 'working' && (
+        {preview.status === 'working' && !preview.previous && (
           <div
             role="status"
             aria-busy="true"
@@ -1300,18 +1469,28 @@ function CanvasPanel({
             </div>
           </div>
         )}
-        {ready && 'artifact' in preview && (
+        {readyPreview && 'artifact' in readyPreview && (
           <HtmlInvitationFrame
-            src={preview.renderUrl}
-            title={preview.title}
+            src={readyPreview.renderUrl}
+            title={readyPreview.title}
             className="h-[68dvh] min-h-[30rem] max-h-[45rem] w-full max-w-[42rem] rounded-lg border border-[#cbd5e1] bg-white shadow-[0_12px_32px_rgba(15,23,42,0.12)]"
           />
         )}
-        {ready && 'specification' in preview && (
+        {readyPreview && 'specification' in readyPreview && (
           <InvitationCanvas
-            specification={preview.specification}
+            specification={readyPreview.specification}
             className="min-h-[30rem] w-full max-w-[42rem] border-[#cbd5e1] shadow-[0_12px_32px_rgba(15,23,42,0.12)]"
           />
+        )}
+        {preview.status === 'working' && preview.previous && (
+          <div
+            role="status"
+            aria-busy="true"
+            aria-label="Updating existing preview"
+            className="miad-feedback-enter absolute left-5 top-5 z-10 rounded-md border border-[#cbd5e1] bg-white/95 px-3 py-2 text-xs font-medium text-[#343a42] shadow-sm"
+          >
+            Updating your invitation…
+          </div>
         )}
         {preview.status === 'failed' && (
           <div className="flex min-h-[30rem] w-full max-w-[42rem] flex-col items-center justify-center rounded-lg border border-dashed border-[#fdba74] bg-[#fffaf5] px-6 text-center">
@@ -1341,10 +1520,10 @@ export function AiStudioView({
   sendDisabled,
   sendLabel,
   suggestions,
-  editorHref,
+  studioHref,
   detailsHref,
   failedMessage,
-  manualHref,
+  invitationsHref,
   imageBar,
   questionPhase = 'IDLE',
   question = null,
@@ -1354,6 +1533,7 @@ export function AiStudioView({
   profile,
   recentInvitations = [],
   recentProjectsLoading = false,
+  projectLoading = false,
   micSupported,
   listening,
   loggingOut,
@@ -1365,16 +1545,16 @@ export function AiStudioView({
   onSuggestion,
   onReloadSuggestions,
   canReloadSuggestions,
-  onAttachFile,
-  canAttach = false,
-  pendingUpload = null,
-  attachNotice = null,
   publishUrl = null,
   publishing = false,
   onPublish = () => undefined,
   publicationPending = false,
-  canEditDesign = false,
-  onRegenerateDesign = () => undefined,
+  modelOptions = [],
+  modelPreference = 'auto',
+  modelSelectionLoading = false,
+  modelSelectionOperation = 'generation',
+  onModelPreferenceChange = () => undefined,
+  imageUpload = null,
 }: {
   messages: StudioMessage[];
   preview: StudioPreview;
@@ -1384,10 +1564,10 @@ export function AiStudioView({
   sendDisabled: boolean;
   sendLabel: string;
   suggestions: string[];
-  editorHref: string | null;
+  studioHref: string | null;
   detailsHref: string | null;
   failedMessage: string | null;
-  manualHref: string;
+  invitationsHref: string;
   imageBar: React.ReactNode;
   questionPhase?: StudioQuestionPhase;
   question?: SmartQuestion | null;
@@ -1397,6 +1577,7 @@ export function AiStudioView({
   profile: StudioProfile;
   recentInvitations?: StudioRecentInvitation[];
   recentProjectsLoading?: boolean;
+  projectLoading?: boolean;
   loggingOut?: boolean;
   onLogout?: () => void;
   onPromptChange: (value: string) => void;
@@ -1405,41 +1586,22 @@ export function AiStudioView({
   onSuggestion: (value: string) => void;
   onReloadSuggestions?: () => void;
   canReloadSuggestions?: boolean;
-  onAttachFile?: (file: File) => void;
-  canAttach?: boolean;
-  pendingUpload?: { name: string; size: number; type: string } | null;
-  attachNotice?: string | null;
   publishUrl?: string | null;
   publishing?: boolean;
   onPublish?: () => void;
   publicationPending?: boolean;
-  canEditDesign?: boolean;
-  onRegenerateDesign?: (instruction: string) => void;
+  modelOptions?: AiStudioModelOption[];
+  modelPreference?: string;
+  modelSelectionLoading?: boolean;
+  modelSelectionOperation?: AiStudioModelOption['operations'][number];
+  onModelPreferenceChange?: (value: string) => void;
+  imageUpload?: StudioImageUpload | null;
   micSupported?: boolean;
   listening?: boolean;
   onToggleVoice?: () => void;
 }) {
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const started = messages.length > 0;
-  const sidebar = (
-    <StudioSidebar
-      manualHref={manualHref}
-      profile={profile}
-      loggingOut={loggingOut}
-      onLogout={onLogout}
-    />
-  );
-  // Rendered inside a Popover so it overlays the card instead of pushing it down
-  // mid-click; a stacked panel moved the composer out from under the pointer.
-  const attachPanel = onAttachFile ? (
-    <AttachPanel
-      id="studio-attach-input"
-      onAttachFile={onAttachFile}
-      canAttach={canAttach}
-      pendingUpload={pendingUpload}
-      notice={attachNotice}
-    />
-  ) : null;
+  const started = messages.length > 0 || projectLoading;
+  const sidebar = <StudioSidebar profile={profile} loggingOut={loggingOut} onLogout={onLogout} />;
   const composer = (
     <PromptComposer
       prompt={prompt}
@@ -1448,14 +1610,18 @@ export function AiStudioView({
       sendLabel={sendLabel}
       working={preview.status === 'working'}
       variant={started ? 'docked' : 'card'}
-      attachPanel={attachPanel}
-      canAttach={canAttach}
       onPromptChange={onPromptChange}
       onSend={onSend}
       onStop={onStop}
       micSupported={micSupported ?? false}
       listening={listening ?? false}
       onToggleVoice={onToggleVoice ?? (() => undefined)}
+      modelOptions={modelOptions}
+      modelPreference={modelPreference}
+      modelSelectionLoading={modelSelectionLoading}
+      modelSelectionOperation={modelSelectionOperation}
+      onModelPreferenceChange={onModelPreferenceChange}
+      imageUpload={imageUpload}
     />
   );
   return (
@@ -1499,7 +1665,7 @@ export function AiStudioView({
       ) : (
         <>
           <StudioHeader
-            manualHref={manualHref}
+            invitationsHref={invitationsHref}
             detailsHref={detailsHref}
             publishUrl={publishUrl}
             publishing={publishing}
@@ -1549,7 +1715,7 @@ export function AiStudioView({
                 hint={hint}
                 sendDisabled={sendDisabled}
                 sendLabel={sendLabel}
-                editorHref={editorHref}
+                studioHref={studioHref}
                 failedMessage={failedMessage}
                 imageBar={imageBar}
                 questionPhase={questionPhase}
@@ -1563,25 +1729,20 @@ export function AiStudioView({
                 micSupported={micSupported ?? false}
                 listening={listening ?? false}
                 onToggleVoice={onToggleVoice ?? (() => undefined)}
+                modelOptions={modelOptions}
+                modelPreference={modelPreference}
+                modelSelectionLoading={modelSelectionLoading}
+                modelSelectionOperation={modelSelectionOperation}
+                onModelPreferenceChange={onModelPreferenceChange}
+                imageUpload={imageUpload}
               />
               <CanvasPanel
                 preview={preview}
-                editorHref={editorHref}
+                projectLoading={projectLoading}
                 detailsHref={detailsHref}
-                canEditDesign={canEditDesign}
-                onEditDesign={() => setEditDialogOpen(true)}
               />
             </div>
           </div>
-          {editDialogOpen && detailsHref && (
-            <EditDesignDialog
-              onCancel={() => setEditDialogOpen(false)}
-              onRegenerate={(instruction) => {
-                setEditDialogOpen(false);
-                onRegenerateDesign(instruction);
-              }}
-            />
-          )}
         </>
       )}
     </main>

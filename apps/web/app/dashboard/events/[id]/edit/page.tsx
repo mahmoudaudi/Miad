@@ -1,8 +1,5 @@
-import type { Metadata } from 'next';
-import { EditEventClient } from '@/components/events/EditEventClient';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Edit Invitation — Miad' };
-
-export default function EditEventPage({ params }: { params: { id: string } }) {
-  return <EditEventClient eventId={params.id} />;
+export default function EditEventPage() {
+  redirect('/dashboard/invitations');
 }

@@ -95,7 +95,7 @@ apps/api ──AI_SERVICE_URL──▶ apps/ai-service (FastAPI :8000, health on
 ├── skills-lock.json
 ├── package.json               # npm workspaces + orchestration scripts (see §17)
 ├── tsconfig.base.json         # strict TS base (strict, noUncheckedIndexedAccess)
-└── .env.example               # templates only — real `.env` is local + git-ignored
+└── .env.example               # shared template; real root `.env` is git-ignored
 ```
 
 **No Docker files.** `docker-compose.yml` was deleted by owner decision; Docker is not required.
@@ -422,19 +422,18 @@ DATABASE_URL (Supabase pooler + flags — see §8), PORT=3001, API_PREFIX=api,
 CORS_ORIGINS, JWT_SECRET (legacy, unused by code), JWT_ACCESS_SECRET (≥32),
 JWT_REFRESH_SECRET (≥32), JWT_ACCESS_TTL=15m, JWT_REFRESH_TTL=30d,
 NODE_ENV, NEXT_PUBLIC_API_URL, AI_SERVICE_PORT=8000, AI_SERVICE_URL,
-AI_PROVIDER/AI_API_KEY/AI_MODEL (empty), JIRA_URL/JIRA_EMAIL/JIRA_API_TOKEN (local .env only)
+AI_PROVIDER/AI_API_KEY/AI_MODEL (empty), JIRA_URL/JIRA_EMAIL/JIRA_API_TOKEN (root `.env` only)
 ```
 
 Local dev needs: Node ≥20 (repo runs v24; `engines` says ≥20 <23 — align in CI),
-npm ≥10, Python ≥3.11 for the AI service, Supabase project + pooler URL,
-`apps/api/.env` copied from root `.env` (Nest loads cwd `.env`; root `.env`
-alone is NOT enough for the API).
+npm ≥10, Python ≥3.11 for the AI service, and a Supabase project + pooler URL.
+The root `.env` is shared by API, Web, Prisma, and the AI service.
 
 ## 17. Development Commands
 
 ```bash
 npm install
-cp .env apps/api/.env
+cp .env.example .env
 npm run db:seed                    # roles (needs ts-node on PATH → use npm script)
 npm run dev:api                    # NestJS :3001
 npm run dev:web                    # Next.js :3000
@@ -559,186 +558,41 @@ DATABASE_URL` (or fresh shell) when switching credentials.
 - Do not run `prisma migrate dev` casually — it applies to shared Supabase.
 - Old `JWT_SECRET`/`AI_*` empties are intentional placeholders, not bugs.
 
-## 24. Recommended Next Feature
+## 24. Current Feature Status
 
-### Feature 9 — Invitation Media Upload & Library (IMPLEMENTED — VERIFIED, see status at end of section)
+The separate Invitation Media Library feature has been retired. Its gallery page,
+management UI, and list/delete API are removed. Invitation photo upload and public
+image delivery remain internal parts of AI Studio and generated invitations.
+Existing uploaded objects and their metadata are preserved. The database migration
+renames `media_assets` to `invitation_images` without deleting rows; the physical
+Supabase bucket remains `invitation-media` so existing image objects remain usable.
+Old `media://` design references are accepted for backward compatibility while new
+specifications use `image://`.
 
-Selected from the existing roadmap: **Media** is the next incomplete core feature
-after Guests & RSVP. Implement it as a focused invitation-media foundation; do
-not extend it into the editor or public renderer in the same feature.
-
-#### Scope
-
-- Let an authenticated invitation owner upload, list, preview, and delete real
-  raster images associated with one Invitation.
-- Use the existing `MediaAsset` model and Supabase Storage; do not create a
-  duplicate asset model or store file bytes in PostgreSQL.
-- Use one private `invitation-media` bucket, deterministic owner/invitation/media
-  path namespaces, and newly generated object paths rather than overwrites.
-- Support JPEG, PNG, and WebP only, with an explicit maximum of 6 MB per file.
-  No SVG or executable/active file formats.
-
-#### User flow
-
-`Dashboard → Event → Invitation → Media → choose image → validate → upload →
-persist metadata → preview/list → delete with confirmation`.
-
-The UI must expose genuine upload progress, success, validation, storage/server
-error, empty, loading, and deletion states. A failed upload must not produce a
-fake `MediaAsset`; failed finalization must clean up its orphaned object.
-
-#### Backend / API
-
-- Add an authenticated `media` NestJS module and a server-only Supabase Storage
-  adapter. If the official SDK is required, pin it and keep it out of the web
-  client bundle.
-- Proposed owner-scoped endpoints:
-  - `GET /api/v1/invitations/:invitationId/media?cursor=&limit=` — paginated
-    metadata plus batched short-lived preview URLs.
-  - `POST /api/v1/invitations/:invitationId/media/uploads` — validate file
-    metadata, generate `mediaId` and server-controlled object path, then return a
-    signed upload target/token.
-  - `POST /api/v1/invitations/:invitationId/media/:mediaId/complete` — verify the
-    uploaded object, type/signature and size, then persist `MediaAsset`
-    idempotently.
-  - `DELETE /api/v1/invitations/:invitationId/media/:mediaId` — remove the
-    Storage object and database record with retry-safe behavior.
-- Never accept `userId`, an arbitrary bucket, arbitrary object path, or a
-  client-provided permanent URL. Return safe errors without Storage/database
-  internals.
-
-#### Frontend / routes
-
-- Add `/dashboard/invitations/[id]/media` and a real Media link from owned
-  invitation details.
-- Add a small client upload island using the native file input and direct signed
-  upload; no drag/drop or upload dependency is required.
-- Render a responsive, lazy-loaded media grid with file name/type/size, preview,
-  upload state, retry, and accessible delete confirmation.
-- Update local state after upload/delete; do not refetch the full page after
-  each action and do not poll.
-
-#### Database / Storage
-
-- Reuse `MediaAsset(id,userId,invitationId,fileName,fileUrl,fileType,fileSize,createdAt)`;
-  no new model or column is currently required. Store the stable bucket object
-  path in `fileUrl`, never an expiring signed URL.
-- A migration is expected only for `@@index([invitationId])`, because the primary
-  list/ownership join filters on the foreign-key side and PostgreSQL does not
-  index it automatically. Add no speculative `userId` index unless an actual
-  query requires it.
-- Provision and document the private bucket with file-size and MIME restrictions.
-  Keep the existing server-only Prisma/Data API posture; do not add broad public
-  Storage policies.
-
-#### Security / ownership
-
-- Every endpoint must derive ownership through
-  `MediaAsset → Invitation → Event → User` and return the same safe `404` for
-  missing and non-owned resources.
-- Keep the Supabase service-role/secret key server-only and never under a
-  `NEXT_PUBLIC_*` variable. Signed upload access must be limited to one generated
-  object path; preview URLs must expire.
-- Validate extension, declared MIME type, byte size, and server-observed file
-  signature before persistence. Sanitize display names; never trust the original
-  filename as a path.
-- Make upload completion and deletion idempotent. Clean invalid uploads and
-  handle cross-service partial failures without exposing internal errors.
-
-#### Performance
-
-- Upload directly from the browser to Storage through a signed target so file
-  bytes do not pass through Next.js or NestJS.
-- Fetch only required metadata, paginate with bounded limits, batch preview URL
-  signing, lazy-load thumbnails, and avoid N+1 Storage/database calls.
-- Use unique immutable paths to avoid CDN overwrite staleness. Do not poll,
-  duplicate requests, or ship the Storage SDK in the browser unless unavoidable.
-
-#### Targeted tests
-
-- Backend unit/API: upload-request validation, owner lookup, generated path,
-  completion verification/idempotency, paginated list, delete, storage failure
-  cleanup, unauthenticated access, cross-user protection, and safe errors.
-- Storage integration/E2E: signed upload → complete → list/preview → delete,
-  invalid/oversized/disallowed files, draft-invitation support, missing
-  invitation handling, retry behavior, and exact temporary-object cleanup.
-- Frontend: loading/empty/error/data states, valid and invalid selection, upload
-  progress/success/failure/retry, preview rendering, delete confirmation, and
-  local state updates without duplicate fetches.
-- Verify the browser flow at 390px, 768px, and 1440px with no horizontal overflow,
-  then run targeted tests, typecheck, ESLint, Prisma validation/status, and
-  production builds.
-
-#### Explicitly out of scope
-
-- Invitation Editor integration, cover-image selection, public invitation media
-  rendering, galleries/carousels, ordering, cropping, filters, transformations,
-  video/audio/documents, bulk upload, drag and drop, AI media generation,
-  notifications, analytics, billing/quotas, admin, and unrelated UI polish.
-
-#### Status — IMPLEMENTED & VERIFIED (2026-09-23)
-
-- **Implemented:** `apps/api/src/media/` (controller, service, storage adapter,
-  validation, DTOs, module) registered in `app.module.ts`; Prisma migration
-  `20260922235058_add_media_assets_invitation_id_index` applied; server-only
-  `@supabase/storage-js@2.117.0` pinned in `apps/api`; `SUPABASE_URL` /
-  `SUPABASE_SERVICE_ROLE_KEY` wired into config + validation + both
-  `.env.example` files (service-role key stays server-only, never
-  `NEXT_PUBLIC_*`); web `lib/media.ts` (XHR signed-target upload with progress),
-  `MediaLibraryView`/`MediaLibraryClient`, route
-  `/dashboard/invitations/[id]/media`, Media link on invitation details.
-- **Tests:** API unit 56/56; web vitest 64/64; API e2e `media` suite = 7 tests —
-  4 storage-independent tests pass (auth required, DTO/cursor validation,
-  cross-user 404s, empty draft list); 3 live-storage tests are present but
-  **skipped until** `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` exist in
-  `apps/api/.env`.
-- **Quality gates:** API and web typecheck OK; app ESLint `--max-warnings=0`
-  OK (root lint still fails only in `packages/config` — pre-existing, out of
-  scope); `prisma validate` OK, `migrate status` = 5/5 up to date; `nest build`
-  and `next build` (production) succeed; new media route present in build.
-- **Browser verification (Chrome headless, production `next start` +
-  `node dist/main.js`, 16/16 checks):** real register → create event/invitation →
-  details Media link → media page heading + "No media yet" empty state; **no
-  horizontal overflow at 390 / 768 / 1440 px** (screenshots taken); invalid
-  `.txt` rejected client-side before any request; valid PNG reaches the real
-  backend and surfaces the safe retryable `503 Media storage is unavailable`
-  state (no storage key in env — correct degradation, no fake asset); delete
-  dialog absent with no selection; unauthenticated media URL redirects to
-  `/login?next=…`; owner `GET …/media` returns `200 {items:[]}`; temp
-  invitation/event/user cleaned up afterward.
-- **Outstanding (blocked only on external credentials):** the 3 live-storage
-  e2e tests (signed upload → complete → idempotent retry → list/preview →
-  delete; signature/size rejection + object cleanup; completion with no object
-  → 400) and a real signed-upload browser pass remain unverified. When a
-  Supabase service-role key is added to `apps/api/.env`, run:
-  `npx jest --config ./test/jest-e2e.json --runInBand --testPathPattern media`
-  in `apps/api` — no code changes required.
+The historical migration files and earlier handoff entries below record the schema
+and implementation as they existed at that time. Their old `media_assets` names are
+historical references, not active application APIs or a user-facing feature.
 
 ---
 
 # Handoff Summary
 
-- **Working:** monorepo builds, 3 services boot, health endpoints, Supabase
-  (16 tables + 4 migrations + roles), full auth, polished Editorial landing,
-  protected Dashboard, owner-scoped Events and Invitation CRUD, persistent
-  Invitation Design Foundation, Invitation Editor, publishing, public invitation,
-  Guests/RSVP, Invitation Media Library (Feature 9 — implemented and verified
-  as far as credentials allow; 3 live-storage e2e tests await a service-role
-  key), In-App Notifications (Feature 10 — implemented and verified), docs,
-  and tests.
-- **Not implemented:** everything in §13–§14 except auth, Dashboard, Events,
-  basic Invitation CRUD, Invitation Design Foundation, Invitation Editor,
-  Public Invitation, Guests/RSVP, Invitation Media Library (Feature 9), and
-  In-App Notifications (Feature 10).
-- **Do NOT change:** committed history, `.env`/secrets handling, DB provider/
-  flags, auth architecture, design tokens, AI-provider abstraction, the
-  no-commit/no-Jira-spam owner rules.
-- **Next agent works on:** only the next explicitly requested feature; media
-  (Feature 9) and notifications (Feature 10) are done; analytics, billing,
-  admin, and AI remain unstarted, AI last.
-- **Critical warnings:** big uncommitted tree (don't lose it, don't push it
-  unasked); slow/flaky pooler is environmental; secrets stay out of chat/docs;
-  hydration traps (§20.7) must not be reintroduced.
+- **Working:** monorepo application, auth, dashboard, owner-scoped Events and
+  Invitations, persistent Invitation Design Foundation, Invitation Editor,
+  publishing, public invitations, AI Studio image selection, Guests/RSVP,
+  notifications, and invitation image storage/public delivery.
+- **Retired:** standalone Invitation Media Library. Its route, gallery, management
+  UI, list/delete endpoints, and feature-specific e2e suite have been removed.
+- **Preserved:** uploaded image rows and Storage objects; image upload, serving, and
+  invitation/event deletion cleanup required by generated invitations; compatibility
+  with existing `media://` design references.
+- **Do NOT change:** `.env`/secrets handling, DB provider/flags, auth architecture,
+  design tokens, AI-provider abstraction, or owner rules around commits and Jira.
+- **Critical warnings:** the worktree contains existing uncommitted changes; do not
+  lose them or push unasked. Secrets stay out of chat/docs; hydration safeguards
+  (§20.7) must not be reintroduced.
+
+---
 
 # 25. MASTER IMPLEMENTATION RULES
 

@@ -1,5 +1,7 @@
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import { CreditsService } from '../billing/credits.service';
+import { FreeCreditsService } from '../billing/free-credits.service';
 import { AuthService } from './auth.service';
 
 /** AuthService unit tests — Prisma is stubbed, bcrypt + JWT are real. No DB needed. */
@@ -9,8 +11,21 @@ describe('AuthService (unit)', () => {
       ({ JWT_ACCESS_SECRET: 'a'.repeat(32), JWT_REFRESH_SECRET: 'b'.repeat(32) })[k] as string,
     get: (k: string) => ({ JWT_ACCESS_TTL: '15m', JWT_REFRESH_TTL: '30d' })[k] as string,
   };
-  const makeService = (prisma: Record<string, unknown>) =>
-    new AuthService(prisma as never, new JwtService({}), configStub as never);
+  /** Records the grant the auth flow asks for, without touching a database. */
+  const freeCreditsStub = () => {
+    const calls: Array<{ userId: string; role: string | null | undefined }> = [];
+    const service = {
+      calls,
+      grantFreeCreditsSafely: async (userId: string, role: string | null | undefined) => {
+        calls.push({ userId, role });
+      },
+    } as unknown as FreeCreditsService & { calls: typeof calls };
+    return service;
+  };
+  const makeService = (
+    prisma: Record<string, unknown>,
+    freeCredits: FreeCreditsService = freeCreditsStub()
+  ) => new AuthService(prisma as never, new JwtService({}), configStub as never, freeCredits);
 
   it('register: hashes password, assigns user role, never leaks the hash', async () => {
     let captured: Record<string, unknown> = {};
@@ -51,6 +66,91 @@ describe('AuthService (unit)', () => {
         password: 'long-enough-pw',
       })
     ).rejects.toThrow('already exists');
+  });
+
+  it('register: grants free credits to the new normal user', async () => {
+    const freeCredits = freeCreditsStub();
+    const prisma = {
+      user: {
+        findUnique: async () => null,
+        create: async (args: { data: Record<string, unknown> }) => ({
+          id: 'u-1',
+          tokenVersion: 0,
+          ...args.data,
+          role: { id: 'r-1', name: 'user' },
+        }),
+      },
+      role: { findUnique: async () => ({ id: 'r-1', name: 'user' }) },
+    };
+
+    await makeService(prisma, freeCredits).register({
+      firstName: 'A',
+      lastName: 'B',
+      email: 'a@b.co',
+      password: 'long-enough-pw',
+    });
+
+    expect(freeCredits.calls).toEqual([{ userId: 'u-1', role: 'user' }]);
+  });
+
+  it('register: still succeeds when the credit ledger is unavailable', async () => {
+    // Real FreeCreditsService over a database that is down: registration must
+    // not be blocked by a billing problem.
+    const brokenPrisma = {
+      $transaction: async () => {
+        throw new Error('billing unavailable');
+      },
+    };
+    const freeCredits = new FreeCreditsService(
+      new CreditsService(brokenPrisma as never),
+      undefined
+    );
+    const prisma = {
+      user: {
+        findUnique: async () => null,
+        create: async (args: { data: Record<string, unknown> }) => ({
+          id: 'u-1',
+          tokenVersion: 0,
+          ...args.data,
+          role: { id: 'r-1', name: 'user' },
+        }),
+      },
+      role: { findUnique: async () => ({ id: 'r-1', name: 'user' }) },
+    };
+
+    const { user } = await makeService(prisma, freeCredits).register({
+      firstName: 'A',
+      lastName: 'B',
+      email: 'a@b.co',
+      password: 'long-enough-pw',
+    });
+
+    expect(user.id).toBe('u-1');
+  });
+
+  it('login: an existing user is not re-granted at sign-in time', async () => {
+    const freeCredits = freeCreditsStub();
+    const prisma = {
+      user: {
+        findUnique: async () => ({
+          id: 'u-1',
+          email: 'a@b.co',
+          passwordHash: await bcrypt.hash('long-enough-pw', 4),
+          isActive: true,
+          tokenVersion: 0,
+          role: { id: 'r-1', name: 'user' },
+        }),
+      },
+    };
+
+    await makeService(prisma, freeCredits).login({
+      email: 'a@b.co',
+      password: 'long-enough-pw',
+    });
+
+    // Password sign-in never grants; only account creation does. The grant key
+    // is per user, so a later backfill cannot double it either.
+    expect(freeCredits.calls).toEqual([]);
   });
 
   it('login: rejects unknown email with a generic message', async () => {

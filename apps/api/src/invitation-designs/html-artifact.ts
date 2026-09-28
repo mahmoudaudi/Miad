@@ -16,6 +16,7 @@ const MAX_CSS_RULES = 500;
 const MAX_CSS_DECLARATIONS = 1_500;
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const SAFE_CLASS = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+const STITCH_IMAGE_HOST = 'lh3.googleusercontent.com';
 const HTML_TAGS = [
   'main',
   'section',
@@ -51,6 +52,7 @@ const HTML_TAGS = [
   'hr',
   'figure',
   'figcaption',
+  'img',
 ];
 const SAFE_CSS_PROPERTIES = new Set([
   'accent-color',
@@ -401,6 +403,12 @@ export type HtmlArtifactEnvelope = {
   description: string;
   body: string;
   css: string;
+  /** Private provider provenance used only to edit the owned Stitch screen. */
+  stitch?: {
+    projectId: string;
+    screenId: string;
+    modelId?: string;
+  };
 };
 
 export type PublicHtmlArtifactMetadata = Pick<
@@ -437,14 +445,18 @@ export function isHtmlArtifactEnvelope(value: unknown): value is HtmlArtifactEnv
   return artifact.format === HTML_ARTIFACT_FORMAT && artifact.version === HTML_ARTIFACT_VERSION;
 }
 
-export function sanitizeHtmlArtifact(value: unknown): HtmlArtifactEnvelope {
+export function sanitizeHtmlArtifact(
+  value: unknown,
+  options: { allowEmptyCssOutput?: boolean } = {}
+): HtmlArtifactEnvelope {
   if (!isHtmlArtifactEnvelope(value)) {
     throw artifactValidationError('artifact', 'contract', 'format-and-version', null, 'metadata');
   }
   const title = plainText(value.title, HTML_ARTIFACT_LIMITS.title, 'title');
   const description = plainText(value.description, HTML_ARTIFACT_LIMITS.description, 'description');
   const body = sanitizeBody(value.body);
-  const css = sanitizeCss(value.css);
+  const css = sanitizeCss(value.css, options.allowEmptyCssOutput ?? false);
+  const stitch = sanitizeStitchProvenance(value.stitch);
   return {
     format: HTML_ARTIFACT_FORMAT,
     version: HTML_ARTIFACT_VERSION,
@@ -452,6 +464,23 @@ export function sanitizeHtmlArtifact(value: unknown): HtmlArtifactEnvelope {
     description,
     body,
     css,
+    ...(stitch ? { stitch } : {}),
+  };
+}
+
+function sanitizeStitchProvenance(value: unknown): HtmlArtifactEnvelope['stitch'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  const projectId = typeof candidate.projectId === 'string' ? candidate.projectId.trim() : '';
+  const screenId = typeof candidate.screenId === 'string' ? candidate.screenId.trim() : '';
+  const modelId = typeof candidate.modelId === 'string' ? candidate.modelId.trim() : '';
+  if (!/^[A-Za-z0-9_-]{1,120}$/.test(projectId) || !/^[A-Za-z0-9_-]{1,120}$/.test(screenId)) {
+    return undefined;
+  }
+  return {
+    projectId,
+    screenId,
+    ...(modelId && /^[A-Z0-9_]{1,120}$/.test(modelId) ? { modelId } : {}),
   };
 }
 
@@ -466,13 +495,59 @@ export function toPublicHtmlArtifactMetadata(
   };
 }
 
-export function renderHtmlDocument(artifactValue: unknown, nonce: string): string {
+export function attachExplicitImages<
+  T extends { title: string; description: string; body: string; css: string },
+>(artifact: T, images: Array<{ id: string; fileName: string }>): T {
+  if (images.length === 0) return artifact;
+  let used = 0;
+  const body = artifact.body.replace(/<img\b[^>]*>/gi, (tag) => {
+    const image = images[used];
+    if (!image) return tag;
+    used += 1;
+    const src = `image://${image.id}`;
+    if (/\bsrc\s*=\s*(["'])[^"']*\1/i.test(tag)) {
+      return tag.replace(/\bsrc\s*=\s*(["'])[^"']*\1/i, `src="${src}"`);
+    }
+    return tag.replace(/>$/, ` src="${src}">`);
+  });
+  const remaining = images.slice(used);
+  const appended = remaining.length
+    ? [
+        body,
+        '<section class="miad-user-photos" aria-label="User supplied photos">',
+        ...remaining.map(
+          (image) =>
+            `<figure class="miad-user-photo"><img src="image://${image.id}" alt="${escapeHtml(image.fileName)}" loading="lazy" decoding="async"></figure>`
+        ),
+        '</section>',
+      ].join('')
+    : body;
+  const css = remaining.length
+    ? `${artifact.css}\n.miad-user-photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;padding:1rem}.miad-user-photo{margin:0;overflow:hidden}.miad-user-photo img{display:block;width:100%;height:100%;min-height:240px;object-fit:cover}`
+    : artifact.css;
+  return { ...artifact, body: appended, css };
+}
+
+export function renderHtmlDocument(
+  artifactValue: unknown,
+  nonce: string,
+  imageUrl?: (imageId: string) => string
+): string {
   const artifact = sanitizeHtmlArtifact(artifactValue);
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) {
     throw artifactValidationError('nonce', 'format', 'nonce-pattern', nonce.length, 'metadata');
   }
   const description = escapeHtml(artifact.description);
   const title = escapeHtml(artifact.title);
+  const body = imageUrl
+    ? artifact.body.replace(
+        /image:\/\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})/g,
+        (_match, imageId: string) => {
+          const url = imageUrl(imageId);
+          return /^\/[A-Za-z0-9_./?=&%~-]+$/.test(url) ? url : '';
+        }
+      )
+    : artifact.body;
   return [
     '<!doctype html>',
     '<html lang="en">',
@@ -484,7 +559,7 @@ export function renderHtmlDocument(artifactValue: unknown, nonce: string): strin
     '<title>' + title + '</title>',
     '<style nonce="' + nonce + '">' + artifact.css + '</style>',
     '</head>',
-    '<body>' + artifact.body + '</body>',
+    '<body>' + body + '</body>',
     '</html>',
   ].join('');
 }
@@ -500,7 +575,7 @@ export function htmlContentSecurityPolicy(nonce: string): string {
     "script-src 'none'",
     `style-src 'nonce-${nonce}'`,
     "style-src-attr 'none'",
-    "img-src 'none'",
+    `img-src 'self' https://${STITCH_IMAGE_HOST}`,
     "font-src 'none'",
     "media-src 'none'",
     "connect-src 'none'",
@@ -595,7 +670,13 @@ function plainText(value: unknown, max: number, field: string): string {
     throw artifactValidationError(artifactField, 'type', 'plain-text-string', null, 'metadata');
   }
   if (value.length > max * 8) {
-    throw artifactValidationError(artifactField, 'size', 'plain-text-input-limit', value.length, 'metadata');
+    throw artifactValidationError(
+      artifactField,
+      'size',
+      'plain-text-input-limit',
+      value.length,
+      'metadata'
+    );
   }
   const cleaned = stripControlCharacters(
     decodeEntities(
@@ -631,7 +712,13 @@ function plainText(value: unknown, max: number, field: string): string {
 
 function sanitizeBody(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) {
-    throw artifactValidationError('html', 'content', 'html-nonempty-string', typeof value === 'string' ? value.length : null, 'html');
+    throw artifactValidationError(
+      'html',
+      'content',
+      'html-nonempty-string',
+      typeof value === 'string' ? value.length : null,
+      'html'
+    );
   }
   if (value.length > MAX_BODY_INPUT) {
     throw artifactValidationError('html', 'size', 'html-input-limit', value.length, 'html');
@@ -641,9 +728,12 @@ function sanitizeBody(value: unknown): string {
     allowedAttributes: {
       '*': ['class', 'id', 'aria-*', 'role', 'lang', 'dir', 'title'],
       time: ['datetime'],
+      img: ['src', 'alt', 'width', 'height', 'loading', 'decoding', 'referrerpolicy'],
     },
     allowedClasses: { '*': [SAFE_CLASS] },
-    allowedSchemes: [],
+    // URL-bearing attributes are allowed only on img, and transformTags below
+    // additionally restricts them to the exact Stitch image host and paths.
+    allowedSchemes: ['https', 'image'],
     allowProtocolRelative: false,
     disallowedTagsMode: 'discard',
     nonTextTags: [
@@ -683,6 +773,16 @@ function sanitizeBody(value: unknown): string {
         for (const name of Object.keys(next)) {
           if (name.startsWith('aria-') && next[name]!.length > 200) delete next[name];
         }
+        if (tagName === 'img') {
+          if (!isApprovedStitchImageUrl(next.src)) delete next.src;
+          if (!next.src) return { tagName: 'span', attribs: {} };
+          if ((next.alt ?? '').length > 500) next.alt = next.alt!.slice(0, 500);
+          if (!/^\d{1,4}$/.test(next.width ?? '')) delete next.width;
+          if (!/^\d{1,4}$/.test(next.height ?? '')) delete next.height;
+          if (!/^(?:eager|lazy)$/.test(next.loading ?? '')) delete next.loading;
+          if (!/^(?:async|auto|sync)$/.test(next.decoding ?? '')) delete next.decoding;
+          next.referrerpolicy = 'no-referrer';
+        }
         return { tagName, attribs: next };
       },
     },
@@ -699,9 +799,39 @@ function sanitizeBody(value: unknown): string {
   return body;
 }
 
-function sanitizeCss(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw artifactValidationError('css', 'content', 'css-nonempty-string', typeof value === 'string' ? value.length : null, 'css');
+function isApprovedStitchImageUrl(value: string | undefined): boolean {
+  if (!value || value.length > 2_048 || hasControlCharacters(value)) return false;
+  if (
+    /^image:\/\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(
+      value
+    )
+  ) {
+    return true;
+  }
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'https:' &&
+      url.hostname === STITCH_IMAGE_HOST &&
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      (url.pathname.startsWith('/aida/') || url.pathname.startsWith('/aida-public/'))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeCss(value: unknown, allowEmptyOutput: boolean): string {
+  if (typeof value !== 'string' || (!value.trim() && !allowEmptyOutput)) {
+    throw artifactValidationError(
+      'css',
+      'content',
+      'css-nonempty-string',
+      typeof value === 'string' ? value.length : null,
+      'css'
+    );
   }
   if (value.length > MAX_CSS_INPUT) {
     throw artifactValidationError('css', 'size', 'css-input-limit', value.length, 'css');
@@ -758,11 +888,17 @@ function sanitizeCss(value: unknown): string {
     if (!propertyAllowed || !isSafeCssValue(declaration.value)) declaration.remove();
   });
   if (rules > MAX_CSS_RULES || declarations > MAX_CSS_DECLARATIONS) {
-    throw artifactValidationError('css', 'size', 'css-rule-or-declaration-limit', value.length, 'css');
+    throw artifactValidationError(
+      'css',
+      'size',
+      'css-rule-or-declaration-limit',
+      value.length,
+      'css'
+    );
   }
   const css = root.toString().trim();
   if (
-    !css ||
+    (!css && !allowEmptyOutput) ||
     css.length > HTML_ARTIFACT_LIMITS.css ||
     /[<>\\]/.test(css) ||
     FORBIDDEN_CSS_VALUE.test(css)
@@ -774,7 +910,12 @@ function sanitizeCss(value: unknown): string {
         : /[<>\\]/.test(css)
           ? 'css-angle-or-backslash'
           : 'css-forbidden-value';
-    const category = rule === 'css-forbidden-value' || rule === 'css-angle-or-backslash' ? 'security' : !css ? 'content' : 'size';
+    const category =
+      rule === 'css-forbidden-value' || rule === 'css-angle-or-backslash'
+        ? 'security'
+        : !css
+          ? 'content'
+          : 'size';
     throw artifactValidationError('css', category, rule, value.length, 'css');
   }
   return css;

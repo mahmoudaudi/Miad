@@ -1,8 +1,5 @@
-import type { Metadata } from 'next';
-import { EventsListClient } from '@/components/events/EventsListClient';
-
-export const metadata: Metadata = { title: 'Invitations — Miad' };
+import { redirect } from 'next/navigation';
 
 export default function EventsPage() {
-  return <EventsListClient />;
+  redirect('/dashboard/invitations');
 }

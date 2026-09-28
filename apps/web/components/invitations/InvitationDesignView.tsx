@@ -57,10 +57,10 @@ export function InvitationDesignView({
           This invitation is unavailable or may have been removed.
         </p>
         <Link
-          href="/dashboard/events"
+          href="/dashboard/invitations"
           className={`mt-7 inline-flex rounded-xl bg-primary px-5 py-3 text-label-md text-white ${focusRing}`}
         >
-          Back to Events
+          Back to Invitations
         </Link>
       </main>
     );
@@ -123,10 +123,10 @@ export function InvitationDesignView({
                 Saved: {invitationDesignOptions.find((option) => option.id === currentTheme)?.name}
               </span>
               <Link
-                href={`/dashboard/invitations/${invitationId}/editor`}
+                href={`/dashboard/invitations/new?invitationId=${encodeURIComponent(invitationId)}`}
                 className={`rounded-xl bg-primary px-4 py-2.5 text-label-md text-white ${focusRing}`}
               >
-                Open editor
+                Continue in AI Studio
               </Link>
             </div>
           )}

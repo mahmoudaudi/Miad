@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useRef, useState } from 'react';
-import { AuthUser, getCurrentUser } from '@/lib/auth';
+import { getCurrentUser } from '@/lib/auth';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLocale } from '@/lib/i18n/LocaleProvider';
 import {
@@ -12,9 +12,6 @@ import {
 import { PopularPrompts } from './PopularPrompts';
 import { BTN_PRIMARY } from './theme';
 import { TypewriterInput } from './TypewriterInput';
-
-export const GENERATE_INVITE_AUTHENTICATED_TARGET = '/dashboard/invitations/new';
-export const GENERATE_INVITE_ANONYMOUS_TARGET = '/register';
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ATTACHABLE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
@@ -26,14 +23,6 @@ export function isAttachableImage(file: { type: string; size: number }): boolean
     file.size > 0 &&
     file.size <= MAX_ATTACHMENT_BYTES
   );
-}
-
-/**
- * Where "Create Invitation" sends the visitor: signed-in hosts start the real
- * event-creation flow, everyone else creates an account first.
- */
-export function resolveGenerateInviteTarget(user: AuthUser | null): string {
-  return user ? GENERATE_INVITE_AUTHENTICATED_TARGET : GENERATE_INVITE_ANONYMOUS_TARGET;
 }
 
 type SpeechRecognitionInstance = {
@@ -127,18 +116,21 @@ export function PromptBox() {
 
   const startInvite = async () => {
     if (starting) return;
-    const saved = savePendingInvitationPrompt(value);
-    if (!saved) return;
     setStarting(true);
     try {
       const user = await getCurrentUser();
+      // Stamp the prompt with its author when known so a later account on
+      // this device can never auto-apply it.
+      const saved = savePendingInvitationPrompt(value, user?.id ?? null);
+      if (!saved) return;
       if (user) {
-        router.push(GENERATE_INVITE_AUTHENTICATED_TARGET);
+        router.push('/dashboard/invitations/new');
       } else {
         window.dispatchEvent(new Event(PENDING_PROMPT_AUTH_EVENT));
       }
     } catch {
-      window.dispatchEvent(new Event(PENDING_PROMPT_AUTH_EVENT));
+      const saved = savePendingInvitationPrompt(value);
+      if (saved) window.dispatchEvent(new Event(PENDING_PROMPT_AUTH_EVENT));
     } finally {
       setStarting(false);
     }
@@ -238,7 +230,7 @@ export function PromptBox() {
             title={t.dictate}
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:h-9 sm:w-9 ${
               listening
-                ? 'animate-pulse border-transparent bg-accent text-white'
+                ? 'animate-pulse border-transparent bg-accent text-background'
                 : 'text-muted hover:bg-ink/5 hover:text-ink'
             }`}
           >

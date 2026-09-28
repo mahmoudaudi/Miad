@@ -51,13 +51,13 @@ export function PopularPrompts({
   return (
     <div className="mt-6 flex w-full flex-col items-center gap-3">
       <span className="text-body-sm text-muted">{examplesLabel}</span>
-      <div className="flex flex-wrap items-center justify-center gap-2 text-body-sm text-muted">
+      <div className="-mx-4 flex max-w-full flex-nowrap items-center justify-start gap-2 overflow-x-auto px-4 text-body-sm text-muted [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:flex-wrap sm:justify-center sm:overflow-visible sm:px-0">
         {visible.map((prompt) => (
           <button
             key={prompt}
             type="button"
             onClick={() => onSelect?.(prompt)}
-            className="min-h-10 rounded-full border border-line bg-surface px-4 py-2 transition-colors hover:border-muted/40"
+            className="min-h-10 shrink-0 whitespace-nowrap rounded-full border border-line bg-surface px-4 py-2 transition-colors hover:border-muted/40"
           >
             {prompt}
           </button>
@@ -67,7 +67,7 @@ export function PopularPrompts({
           onClick={shuffle}
           aria-label={shuffleLabel}
           title={shuffleLabel}
-          className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-ink/5"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-ink/5"
         >
           <span
             className="material-symbols-outlined text-base text-muted transition-transform duration-500"

@@ -4,12 +4,15 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   INVITATION_AI_PROVIDER,
@@ -25,6 +28,7 @@ import type {
 } from './dto/ai-invitation-design.dto';
 import type { UpdateInvitationDesignDto } from './dto/update-invitation-design.dto';
 import {
+  attachExplicitImages,
   HtmlArtifactValidationError,
   isHtmlArtifactEnvelope,
   legacySpecificationToHtmlArtifact,
@@ -34,6 +38,12 @@ import {
   type PublicHtmlArtifactMetadata,
 } from './html-artifact';
 import { INVITATION_SLUG_PATTERN } from '../invitations/dto/create-invitation.dto';
+import {
+  AiCreditsGuard,
+  AI_CREDIT_OPERATION,
+  type AiCreditOperation,
+} from '../billing/ai-credits.guard';
+import { StitchMcpService } from './stitch-mcp.service';
 
 export type InvitationDesignSpecification = {
   schemaVersion: 1;
@@ -283,8 +293,62 @@ export class InvitationDesignsService {
     private readonly prisma: PrismaService,
     @Optional()
     @Inject(INVITATION_AI_PROVIDER)
-    private readonly aiProvider?: InvitationAiProvider
+    private readonly aiProvider?: InvitationAiProvider,
+    @Optional() private readonly config?: ConfigService,
+    @Optional() private readonly stitch?: StitchMcpService,
+    @Optional() private readonly credits?: AiCreditsGuard
   ) {}
+
+  /**
+   * Phase 2 credit lifecycle. `reserveAiCredits` holds the credits *before* the
+   * provider is called, so a request that cannot afford the operation never
+   * reaches Stitch or the AI provider. It returns the idempotency key, or null
+   * when credit accounting is not wired (no charge is attempted in that case).
+   */
+  private async reserveAiCredits(input: {
+    userId: string;
+    invitationId: string;
+    operationType: AiCreditOperation;
+    idempotencyKey?: string;
+    model?: string;
+  }): Promise<string | null> {
+    if (!this.credits) return null;
+    const trimmed = input.idempotencyKey?.trim();
+    const idempotencyKey =
+      trimmed || `${input.operationType}:${input.invitationId}:${randomUUID()}`;
+    await this.credits.reserve({
+      userId: input.userId,
+      invitationId: input.invitationId,
+      operationType: input.operationType,
+      idempotencyKey,
+      ...(input.model ? { model: input.model } : {}),
+    });
+    return idempotencyKey;
+  }
+
+  /** Converts the hold into a real charge. Only ever called after the version exists. */
+  private async chargeAiCredits(userId: string, idempotencyKey: string | null): Promise<void> {
+    if (idempotencyKey) await this.credits?.charge(userId, idempotencyKey);
+  }
+
+  /** Returns the hold on failure or cancellation. Never masks the original error. */
+  private async refundAiCredits(
+    userId: string,
+    idempotencyKey: string | null,
+    error: unknown
+  ): Promise<void> {
+    if (!idempotencyKey) return;
+    await this.credits?.refundAfterFailure(userId, idempotencyKey, {
+      cancellation: error instanceof AiGenerationCancelledError,
+    });
+  }
+
+  getStitchModelOptions() {
+    if (!this.stitch) {
+      throw new ServiceUnavailableException('Stitch is not configured on the API server.');
+    }
+    return this.stitch.getModelOptions();
+  }
 
   async findCurrent(
     userId: string,
@@ -307,7 +371,7 @@ export class InvitationDesignsService {
     return { design: design ? this.toStoredResponse(design, invitation.event) : null };
   }
 
-  async findPublished(slug: string, mediaBaseUrl?: string): Promise<PublicInvitationResponse> {
+  async findPublished(slug: string, imageBaseUrl?: string): Promise<PublicInvitationResponse> {
     this.validatePublicSlug(slug);
     const invitation = await this.prisma.invitation.findFirst({
       where: { slug, status: 'PUBLISHED', publishedAt: { not: null } },
@@ -346,8 +410,8 @@ export class InvitationDesignsService {
     const specification = this.normalizeSpecification(design.designSpecification, invitation.event);
     return {
       designSpecification:
-        mediaBaseUrl != null
-          ? this.resolveMediaReferences(specification, slug, mediaBaseUrl)
+        imageBaseUrl != null
+          ? this.resolveImageReferences(specification, slug, imageBaseUrl)
           : specification,
     };
   }
@@ -400,23 +464,23 @@ export class InvitationDesignsService {
   }
 
   /**
-   * Rewrites `media://{id}` element references into absolute public content
+   * Rewrites current `image://{id}` and legacy `media://{id}` references into absolute public content
    * URLs so guests (unauthenticated) can load uploaded photos. Plain https
    * URLs pass through untouched.
    */
-  resolveMediaReferences(
+  resolveImageReferences(
     specification: InvitationDesignSpecification,
     slug: string,
-    mediaBaseUrl: string
+    imageBaseUrl: string
   ): InvitationDesignSpecification {
-    const base = mediaBaseUrl.replace(/\/$/, '');
+    const base = imageBaseUrl.replace(/\/$/, '');
     const elements = specification.elements?.map((element) => {
       if (element.type !== 'image' || typeof element.imageUrl !== 'string') return element;
-      const match = /^media:\/\/([0-9a-fA-F-]{36})$/.exec(element.imageUrl);
+      const match = /^(?:image|media):\/\/([0-9a-fA-F-]{36})$/.exec(element.imageUrl);
       if (!match) return element;
       return {
         ...element,
-        imageUrl: `${base}/api/v1/public/invitations/${slug}/media/${match[1]}/content`,
+        imageUrl: `${base}/api/v1/public/invitations/${slug}/images/${match[1]}/content`,
       };
     });
     return { ...specification, elements };
@@ -521,18 +585,33 @@ export class InvitationDesignsService {
         ? this.normalizeSpecification(latest.designSpecification, invitation.event)
         : null;
     const operationType = dto.mode === 'regenerate' ? 'REGENERATE_DESIGN' : 'GENERATE_DESIGN';
+    // A regenerate is still a paid AI generation of the current design.
+    const creditKey = await this.reserveAiCredits({
+      userId,
+      invitationId,
+      operationType:
+        dto.mode === 'regenerate' ? AI_CREDIT_OPERATION.EDIT : AI_CREDIT_OPERATION.GENERATE,
+      idempotencyKey: dto.idempotencyKey,
+      model: dto.modelPreference,
+    });
+    let versionPersisted = false;
     try {
       const result = await this.requireAiProvider().generateDesign({
         operation: dto.mode ?? 'generate',
         prompt: dto.prompt,
         event: this.toAiEventContext(invitation.event),
         currentDesign: current,
+        modelPreference: dto.modelPreference ?? 'auto',
+        ...(this.isStrictDesignValidationEnabled()
+          ? {
+              validateSpecification: (specification: unknown) => {
+                this.normalizeSpecification(specification as Prisma.JsonValue, invitation.event);
+              },
+            }
+          : {}),
       });
-      const next = this.normalizeSpecification(
-        result.specification as Prisma.JsonValue,
-        invitation.event
-      );
-      return this.persistVersion(
+      const next = this.normalizeGeneratedSpecification(result.specification, invitation.event);
+      const design = await this.persistVersion(
         userId,
         invitationId,
         invitation.event,
@@ -544,7 +623,11 @@ export class InvitationDesignsService {
           tokensUsed: result.tokensUsed,
         }
       );
+      versionPersisted = true;
+      await this.chargeAiCredits(userId, creditKey);
+      return design;
     } catch (error) {
+      if (!versionPersisted) await this.refundAiCredits(userId, creditKey, error);
       await this.logAiFailure(userId, invitationId, operationType);
       this.rethrowAiError(error);
     }
@@ -555,42 +638,95 @@ export class InvitationDesignsService {
     invitationId: string,
     prompt: string,
     onProgress?: (stage: 'PARSING_RESPONSE' | 'VALIDATING_WEBSITE' | 'SAVING_WEBSITE') => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    modelPreference: 'auto' | string = 'auto',
+    idempotencyKey?: string,
+    explicitImages: Array<{ id: string; fileName: string }> = []
   ): Promise<InvitationHtmlDesignResponse> {
     const cleanPrompt = prompt.trim();
     if (cleanPrompt.length < 10 || cleanPrompt.length > 2_000) {
       throw new BadRequestException('Prompt must be between 10 and 2000 characters.');
     }
     const invitation = await this.findOwnedEventWithLatestVersion(userId, invitationId);
+    // Credits are held before Stitch is contacted, and only become a real
+    // charge once a new design version has actually been persisted.
+    const creditKey = await this.reserveAiCredits({
+      userId,
+      invitationId,
+      operationType: AI_CREDIT_OPERATION.GENERATE,
+      idempotencyKey,
+      model: modelPreference,
+    });
+    let versionPersisted = false;
     try {
-      const result = await this.requireAiProvider().generateHtml({
+      if (!this.stitch) {
+        throw new ServiceUnavailableException('Stitch is not configured on the API server.');
+      }
+      const generated = await this.stitch.generateHtml({
         prompt: cleanPrompt,
-        event: this.toAiEventContext(invitation.event),
-        onProgress,
+        ...(explicitImages.length ? { explicitImages } : {}),
+        ...(modelPreference !== 'auto' ? { modelId: modelPreference } : {}),
+        event: {
+          ...this.toAiEventContext(invitation.event),
+          eventDate: invitation.event.eventDate.toISOString().slice(0, 10),
+        },
+        onProgress: (stage) => onProgress?.(stage),
         signal,
       });
+      const generatedWithImages = attachExplicitImages(generated, explicitImages);
+      const result = {
+        artifact: {
+          title: generatedWithImages.title,
+          description: generatedWithImages.description,
+          body: generatedWithImages.body,
+          css: generatedWithImages.css,
+          stitch: {
+            projectId: generated.projectId,
+            screenId: generated.screenId,
+            ...(generated.modelId ? { modelId: generated.modelId } : {}),
+          },
+        },
+        tokensUsed: null,
+      };
       // A cancellation that lands after the provider responds must still win:
       // never persist a design the caller no longer wants.
       if (signal?.aborted) throw new AiGenerationCancelledError();
       onProgress?.('VALIDATING_WEBSITE');
-      const artifact = sanitizeHtmlArtifact({
-        ...result.artifact,
-        format: 'html',
-        version: 1,
-      });
+      // TEMPORARY: AI design compatibility mode for project deadline.
+      // Re-enable strict validation after AI output formats are stabilized.
+      const sanitizedArtifact = sanitizeHtmlArtifact(
+        {
+          ...result.artifact,
+          format: 'html',
+          version: 1,
+        },
+        { allowEmptyCssOutput: !this.isStrictDesignValidationEnabled() }
+      );
+      const artifact = sanitizedArtifact.css
+        ? sanitizedArtifact
+        : sanitizeHtmlArtifact({
+            ...sanitizedArtifact,
+            css: 'body{margin:0;font-family:serif}',
+          });
       onProgress?.('SAVING_WEBSITE');
-      return this.persistHtmlVersion(
+      const design = await this.persistHtmlVersion(
         userId,
         invitationId,
         invitation.designs[0]?.version ?? 0,
         artifact,
         {
-          sourceType: 'AI_GENERATED',
+          sourceType: 'STITCH_GENERATED',
           operationType: 'GENERATE_DESIGN',
           tokensUsed: result.tokensUsed,
         }
       );
+      versionPersisted = true;
+      await this.chargeAiCredits(userId, creditKey);
+      return design;
     } catch (caught) {
+      // A version that already exists was paid for, so a failure to settle the
+      // charge must never also refund it. Everything before that refunds.
+      if (!versionPersisted) await this.refundAiCredits(userId, creditKey, caught);
       if (caught instanceof HtmlArtifactValidationError) {
         this.logger.debug({
           event: 'html-artifact-validation-failure',
@@ -623,7 +759,17 @@ export class InvitationDesignsService {
     userId: string,
     invitationId: string,
     instruction: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onProgress?: (
+      stage:
+        | 'REFINEMENT_INSPECTING'
+        | 'REFINEMENT_APPLYING'
+        | 'REFINEMENT_VALIDATING'
+        | 'REFINEMENT_SAVING'
+    ) => void,
+    modelPreference: 'auto' | string = 'auto',
+    idempotencyKey?: string,
+    explicitImages: Array<{ id: string; fileName: string }> = []
   ): Promise<InvitationHtmlDesignResponse> {
     const cleanInstruction = instruction.trim();
     if (cleanInstruction.length < 3 || cleanInstruction.length > 1_000) {
@@ -636,29 +782,122 @@ export class InvitationDesignsService {
     if (!latest?.isActive || !isHtmlArtifactEnvelope(latest.designSpecification)) {
       throw new ConflictException('A generated website is required before it can be refined.');
     }
+    // Held before the Stitch edit runs; charged only once the new version exists.
+    const creditKey = await this.reserveAiCredits({
+      userId,
+      invitationId,
+      operationType: AI_CREDIT_OPERATION.EDIT,
+      idempotencyKey,
+      model: modelPreference,
+    });
+    let versionPersisted = false;
+    onProgress?.('REFINEMENT_INSPECTING');
     try {
       const currentArtifact = sanitizeHtmlArtifact(latest.designSpecification);
-      const result = await this.requireAiProvider().refineHtml({
-        prompt: cleanInstruction,
-        event: this.toAiEventContext(invitation.event),
-        project: this.toWebsiteProject(currentArtifact),
-        signal,
-      });
+      onProgress?.('REFINEMENT_APPLYING');
+      const eventContext = this.toAiEventContext(invitation.event);
+      const result =
+        currentArtifact.stitch && this.stitch
+          ? await this.stitch
+              .editHtml({
+                prompt: cleanInstruction,
+                ...(explicitImages.length ? { explicitImages } : {}),
+                event: eventContext,
+                projectId: currentArtifact.stitch.projectId,
+                screenId: currentArtifact.stitch.screenId,
+                ...(currentArtifact.stitch.modelId
+                  ? { modelId: currentArtifact.stitch.modelId }
+                  : {}),
+                signal,
+              })
+              .then((edited) => ({
+                artifact: {
+                  title: edited.title,
+                  description: edited.description,
+                  body: edited.body,
+                  css: edited.css,
+                  stitch: {
+                    projectId: edited.projectId,
+                    screenId: edited.screenId,
+                    ...(edited.modelId ? { modelId: edited.modelId } : {}),
+                  },
+                },
+                tokensUsed: null,
+              }))
+          : await this.requireAiProvider().refineHtml({
+              invitationId,
+              prompt: cleanInstruction,
+              event: eventContext,
+              project: this.toWebsiteProject(currentArtifact),
+              signal,
+              modelPreference,
+              onProgress: (stage) => {
+                if (stage === 'VALIDATING_WEBSITE') onProgress?.('REFINEMENT_VALIDATING');
+              },
+              validateArtifact: (candidate) =>
+                sanitizeHtmlArtifact({ ...candidate, format: 'html', version: 1 }),
+            });
       if (signal?.aborted) throw new AiGenerationCancelledError();
+      onProgress?.('REFINEMENT_VALIDATING');
+      const existingImages = Array.from(
+        currentArtifact.body.matchAll(
+          /image:\/\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})/g
+        ),
+        (match) => ({ id: match[1]!, fileName: 'Uploaded image' })
+      );
+      const imagesToBind = [...existingImages, ...explicitImages].filter(
+        (image, index, images) =>
+          images.findIndex((candidate) => candidate.id === image.id) === index
+      );
       const artifact = sanitizeHtmlArtifact({
-        ...result.artifact,
+        ...attachExplicitImages(result.artifact, imagesToBind),
         format: 'html',
         version: 1,
       });
       if (JSON.stringify(currentArtifact) === JSON.stringify(artifact)) {
         throw new BadRequestException('Refinement changes are required.');
       }
-      return this.persistHtmlVersion(userId, invitationId, latest.version, artifact, {
-        sourceType: 'AI_EDIT',
-        operationType: 'EDIT_DESIGN',
-        tokensUsed: result.tokensUsed,
-      });
+      onProgress?.('REFINEMENT_SAVING');
+      const saveStartedAt = Date.now();
+      try {
+        const design = await this.persistHtmlVersion(
+          userId,
+          invitationId,
+          latest.version,
+          artifact,
+          {
+            sourceType: 'AI_EDIT',
+            operationType: 'EDIT_DESIGN',
+            tokensUsed: result.tokensUsed,
+          }
+        );
+        versionPersisted = true;
+        await this.chargeAiCredits(userId, creditKey);
+        return design;
+      } catch (error) {
+        if (!(error instanceof ConflictException)) {
+          this.logger.warn({
+            event: 'ai-refinement-attempt',
+            operation: 'website-refinement',
+            invitationId,
+            attempt: 0,
+            model: 'n/a',
+            stage: 'version-save',
+            failureCategory: 'database-write',
+            httpStatus: null,
+            durationMs: Date.now() - saveStartedAt,
+            fallbackUsed: false,
+          });
+          throw new InternalServerErrorException(
+            'Unable to update the invitation. The previous design is still preserved.'
+          );
+        }
+        throw error;
+      }
     } catch (caught) {
+      // A version that already exists was paid for, so a failure to settle the
+      // charge must never also refund it. Everything before that refunds.
+      if (!versionPersisted) await this.refundAiCredits(userId, creditKey, caught);
       if (caught instanceof AiGenerationCancelledError || signal?.aborted) {
         throw new AiGenerationCancelledError();
       }
@@ -670,7 +909,7 @@ export class InvitationDesignsService {
             )
           : caught;
       await this.logAiFailure(userId, invitationId, 'EDIT_DESIGN');
-      this.rethrowAiError(error);
+      this.rethrowAiError(error, 'refinement');
     }
   }
 
@@ -688,26 +927,50 @@ export class InvitationDesignsService {
       );
     }
     const current = this.normalizeSpecification(latest.designSpecification, invitation.event);
+    const creditKey = await this.reserveAiCredits({
+      userId,
+      invitationId,
+      operationType: AI_CREDIT_OPERATION.EDIT,
+      idempotencyKey: dto.idempotencyKey,
+      model: dto.modelPreference,
+    });
+    let versionPersisted = false;
     try {
       const result = await this.requireAiProvider().generateDesign({
         operation: 'refine',
         prompt: dto.instruction,
         event: this.toAiEventContext(invitation.event),
         currentDesign: current,
+        modelPreference: dto.modelPreference ?? 'auto',
+        ...(this.isStrictDesignValidationEnabled()
+          ? {
+              validateSpecification: (specification: unknown) => {
+                this.normalizeSpecification(specification as Prisma.JsonValue, invitation.event);
+              },
+            }
+          : {}),
       });
-      const next = this.normalizeSpecification(
-        result.specification as Prisma.JsonValue,
-        invitation.event
-      );
+      const next = this.normalizeGeneratedSpecification(result.specification, invitation.event);
       if (JSON.stringify(current) === JSON.stringify(next)) {
         throw new BadRequestException('Refinement changes are required.');
       }
-      return this.persistVersion(userId, invitationId, invitation.event, latest.version, next, {
-        sourceType: 'AI_EDIT',
-        operationType: 'EDIT_DESIGN',
-        tokensUsed: result.tokensUsed,
-      });
+      const design = await this.persistVersion(
+        userId,
+        invitationId,
+        invitation.event,
+        latest.version,
+        next,
+        {
+          sourceType: 'AI_EDIT',
+          operationType: 'EDIT_DESIGN',
+          tokensUsed: result.tokensUsed,
+        }
+      );
+      versionPersisted = true;
+      await this.chargeAiCredits(userId, creditKey);
+      return design;
     } catch (error) {
+      if (!versionPersisted) await this.refundAiCredits(userId, creditKey, error);
       await this.logAiFailure(userId, invitationId, 'EDIT_DESIGN');
       this.rethrowAiError(error);
     }
@@ -845,6 +1108,100 @@ export class InvitationDesignsService {
     };
   }
 
+  private isStrictDesignValidationEnabled(): boolean {
+    return (
+      this.config?.get<boolean>('aiStrictDesignValidation') ??
+      this.config?.get<boolean>('AI_STRICT_DESIGN_VALIDATION') ??
+      false
+    );
+  }
+
+  private normalizeGeneratedSpecification(
+    value: unknown,
+    event: EventContext
+  ): InvitationDesignSpecification {
+    if (this.isStrictDesignValidationEnabled()) {
+      return this.normalizeSpecification(value as Prisma.JsonValue, event);
+    }
+    const isRecord = (candidate: unknown): candidate is Record<string, unknown> =>
+      typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate);
+    const reject = (): never => {
+      throw new InvitationAiProviderError(
+        'AI provider returned invalid output.',
+        'invalid-output',
+        undefined,
+        null,
+        false
+      );
+    };
+    if (!isRecord(value)) return reject();
+    let source = value;
+    for (const wrapper of ['specification', 'design', 'invitationDesign']) {
+      if (isRecord(source[wrapper])) {
+        source = source[wrapper] as Record<string, unknown>;
+        break;
+      }
+    }
+
+    const unsafeText =
+      /<\s*\/?\s*(?:script|iframe|object|embed|svg|math)\b|\bon[a-z]+\s*=|javascript\s*:|vbscript\s*:|data\s*:\s*text\/html/i;
+    const containsUnsafeText = (candidate: unknown, depth = 0): boolean => {
+      if (depth > 8) return true;
+      if (typeof candidate === 'string') return unsafeText.test(candidate);
+      if (Array.isArray(candidate))
+        return candidate.some((item) => containsUnsafeText(item, depth + 1));
+      if (isRecord(candidate)) {
+        return Object.values(candidate).some((item) => containsUnsafeText(item, depth + 1));
+      }
+      return false;
+    };
+    if (containsUnsafeText(source)) return reject();
+
+    const rawContent = isRecord(source.content) ? source.content : {};
+    const titleCandidate =
+      rawContent.title ?? rawContent.heading ?? source.title ?? source.headline;
+    const sections = Array.isArray(source.sections)
+      ? source.sections.map((section, index) => {
+          if (!isRecord(section)) return section;
+          const type = section.type ?? (index === 0 ? 'hero' : 'details');
+          return {
+            ...section,
+            id: section.id ?? `section-${index + 1}`,
+            type,
+            title: section.title ?? section.heading ?? section.name ?? '',
+            body: section.body ?? section.text ?? section.description ?? '',
+          };
+        })
+      : source.sections;
+    const hasUsableTitle = typeof titleCandidate === 'string' && titleCandidate.trim().length > 0;
+    const hasUsableSection =
+      Array.isArray(sections) &&
+      sections.some(
+        (section) =>
+          isRecord(section) &&
+          [section.title, section.body].some(
+            (part) => typeof part === 'string' && part.trim().length > 0
+          )
+      );
+    const hasUsableElement =
+      Array.isArray(source.elements) &&
+      source.elements.some(
+        (element) =>
+          isRecord(element) && typeof element.text === 'string' && element.text.trim().length > 0
+      );
+    if (!hasUsableTitle && !hasUsableSection && !hasUsableElement) return reject();
+
+    const normalizedSource = {
+      ...source,
+      content: {
+        ...rawContent,
+        ...(hasUsableTitle ? { title: titleCandidate } : {}),
+      },
+      sections,
+    };
+    return this.normalizeSpecification(normalizedSource as Prisma.JsonValue, event);
+  }
+
   private async persistVersion(
     userId: string,
     invitationId: string,
@@ -968,14 +1325,6 @@ export class InvitationDesignsService {
         order: 2,
         visible: true,
       },
-      {
-        id: 'rsvp',
-        type: 'rsvp',
-        title: 'RSVP',
-        body: 'Confirm attendance and share any notes for the host.',
-        order: 3,
-        visible: true,
-      },
     ];
   }
 
@@ -1046,7 +1395,7 @@ export class InvitationDesignsService {
       .map((section, index) => {
         const candidate = section as Partial<InvitationSection>;
         if (!candidate.id || !candidate.type || !candidate.title || !candidate.body) return null;
-        if (!['hero', 'details', 'story', 'schedule', 'rsvp', 'note'].includes(candidate.type))
+        if (!['hero', 'details', 'story', 'schedule', 'note'].includes(candidate.type))
           return null;
         return {
           id: String(candidate.id).slice(0, 64),
@@ -1074,7 +1423,7 @@ export class InvitationDesignsService {
     if (typeof candidate !== 'string') return undefined;
     // Uploaded library photo referenced by id — resolved to a servable URL
     // per context (public absolute URL for guests, signed preview for owners).
-    if (/^media:\/\/[0-9a-fA-F-]{36}$/.test(candidate)) return candidate;
+    if (/^(?:image|media):\/\/[0-9a-fA-F-]{36}$/.test(candidate)) return candidate;
     if (/^https?:\/\//.test(candidate)) return candidate.slice(0, 1000);
     return undefined;
   }
@@ -1164,19 +1513,38 @@ export class InvitationDesignsService {
     }
   }
 
-  private rethrowAiError(error: unknown): never {
+  private rethrowAiError(
+    error: unknown,
+    operation: 'generation' | 'refinement' = 'generation'
+  ): never {
     if (error instanceof BadRequestException) throw error;
+    const updateMessage =
+      'Unable to update the invitation. The previous design is still preserved.';
     if (error instanceof InvitationAiProviderError) {
       if (error.status === 'configuration') {
-        throw new ServiceUnavailableException('AI generation is not configured.');
+        throw new ServiceUnavailableException(
+          operation === 'refinement' ? updateMessage : 'AI generation is not configured.'
+        );
       }
       if (error.status === 'timeout') {
-        throw new BadGatewayException('AI generation timed out. Please try again.');
+        throw new BadGatewayException(
+          operation === 'refinement'
+            ? 'The AI service is temporarily unavailable. Your previous design is safe.'
+            : 'AI generation timed out. Please try again.'
+        );
       }
       if (error.status === 'invalid-output') {
-        throw new BadGatewayException('AI returned an invalid design. Please try again.');
+        throw new BadGatewayException(
+          operation === 'refinement'
+            ? 'The generated update could not be validated, so your previous design was preserved.'
+            : 'AI returned an invalid design. Please try again.'
+        );
       }
-      throw new BadGatewayException('AI generation failed. Please try again.');
+      throw new BadGatewayException(
+        operation === 'refinement'
+          ? 'Unable to update the invitation right now. Your previous design is safe. Please try again.'
+          : 'AI generation failed. Please try again.'
+      );
     }
     throw error;
   }

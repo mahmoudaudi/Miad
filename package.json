@@ -10,7 +10,7 @@
     "packages/config"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm run typecheck --workspaces --if-present",
 
     "dev": "npm run dev --workspaces --if-present",
     "dev:web": "npm run dev --workspace=apps/web",

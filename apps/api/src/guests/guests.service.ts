@@ -71,6 +71,36 @@ export class GuestsService {
     return (event.invitation?.guests ?? []).map((guest) => this.toResponse(guest));
   }
 
+  async findAllForInvitation(userId: string, invitationId: string): Promise<GuestResponse[]> {
+    const eventId = await this.ownedInvitationEventId(userId, invitationId);
+    return this.findAll(userId, eventId);
+  }
+
+  async createForInvitation(userId: string, invitationId: string, dto: CreateGuestDto) {
+    const eventId = await this.ownedInvitationEventId(userId, invitationId);
+    return this.create(userId, eventId, dto);
+  }
+
+  async findOneForInvitation(userId: string, invitationId: string, guestId: string) {
+    const eventId = await this.ownedInvitationEventId(userId, invitationId);
+    return this.findOne(userId, eventId, guestId);
+  }
+
+  async updateForInvitation(
+    userId: string,
+    invitationId: string,
+    guestId: string,
+    dto: UpdateGuestDto
+  ) {
+    const eventId = await this.ownedInvitationEventId(userId, invitationId);
+    return this.update(userId, eventId, guestId, dto);
+  }
+
+  async removeForInvitation(userId: string, invitationId: string, guestId: string) {
+    const eventId = await this.ownedInvitationEventId(userId, invitationId);
+    return this.remove(userId, eventId, guestId);
+  }
+
   async create(userId: string, eventId: string, dto: CreateGuestDto): Promise<GuestResponse> {
     const event = await this.prisma.event.findFirst({
       where: { id: eventId, userId },
@@ -87,6 +117,14 @@ export class GuestsService {
         name: dto.name,
         email: dto.email ?? null,
         phone: dto.phone ?? null,
+        rsvp: {
+          create: {
+            status: dto.status ?? 'PENDING',
+            attendeesCount: this.manualPartySize(dto.status ?? 'PENDING', dto.partySize),
+            message: dto.notes ?? null,
+            respondedAt: dto.status && dto.status !== 'PENDING' ? new Date() : null,
+          },
+        },
       },
       select: guestSelect,
     });
@@ -107,7 +145,7 @@ export class GuestsService {
     if (Object.keys(dto).length === 0) {
       throw new BadRequestException('At least one guest field is required.');
     }
-    await this.findOwnedGuest(userId, eventId, id);
+    const existing = await this.findOwnedGuest(userId, eventId, id);
 
     const data: Prisma.GuestUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -115,7 +153,37 @@ export class GuestsService {
     if (dto.phone !== undefined) data.phone = dto.phone;
 
     try {
-      const guest = await this.prisma.guest.update({ where: { id }, data, select: guestSelect });
+      const status = dto.status ?? existing.rsvp?.status ?? 'PENDING';
+      const partySize = this.manualPartySize(
+        status as 'ATTENDING' | 'PENDING' | 'NOT_ATTENDING',
+        dto.partySize ?? (dto.status ? undefined : existing.rsvp?.attendeesCount)
+      );
+      const respondedAt =
+        status === 'PENDING'
+          ? null
+          : dto.status && dto.status !== existing.rsvp?.status
+            ? new Date()
+            : (existing.rsvp?.respondedAt ?? new Date());
+      const guest = await this.prisma.$transaction(async (transaction) => {
+        await transaction.guest.update({ where: { id }, data });
+        await transaction.rsvp.upsert({
+          where: { guestId: id },
+          create: {
+            guestId: id,
+            status,
+            attendeesCount: partySize,
+            message: dto.notes ?? null,
+            respondedAt,
+          },
+          update: {
+            ...(dto.status !== undefined || dto.partySize !== undefined
+              ? { status, attendeesCount: partySize, respondedAt }
+              : {}),
+            ...(dto.notes !== undefined ? { message: dto.notes } : {}),
+          },
+        });
+        return transaction.guest.findUniqueOrThrow({ where: { id }, select: guestSelect });
+      });
       return this.toResponse(guest);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
@@ -144,13 +212,11 @@ export class GuestsService {
     if (slug.length > 255 || !INVITATION_SLUG_PATTERN.test(slug)) {
       throw new NotFoundException('Invitation not found.');
     }
-    if (!dto.email && !dto.phone) {
-      throw new BadRequestException('Email or phone is required.');
-    }
-    if (dto.status === 'ATTENDING' && dto.attendeesCount < 1) {
+    const attendeesCount = dto.attendeesCount ?? (dto.status === 'ATTENDING' ? 1 : 0);
+    if (dto.status === 'ATTENDING' && attendeesCount < 1) {
       throw new BadRequestException('Attending responses require at least one attendee.');
     }
-    if (dto.status === 'NOT_ATTENDING' && dto.attendeesCount !== 0) {
+    if (dto.status === 'NOT_ATTENDING' && attendeesCount !== 0) {
       throw new BadRequestException('Declined responses must have zero attendees.');
     }
 
@@ -163,36 +229,38 @@ export class GuestsService {
           });
           if (!invitation) throw new NotFoundException('Invitation not found.');
 
-          const contacts: Prisma.GuestWhereInput[] = [];
-          if (dto.email) contacts.push({ email: dto.email });
-          if (dto.phone) contacts.push({ phone: dto.phone });
           const matches = await transaction.guest.findMany({
-            where: { invitationId: invitation.id, OR: contacts },
+            where: {
+              invitationId: invitation.id,
+              name: { equals: dto.name, mode: 'insensitive' },
+            },
             select: { id: true, rsvp: { select: { id: true } } },
             take: 2,
           });
-          if (matches.length > 1 || matches[0]?.rsvp) {
+          if (matches.length > 1) {
             throw new ConflictException(
-              'An attendance confirmation already exists for these contact details.'
+              'Multiple guests share this name. Please contact the host.'
             );
           }
 
           const rsvp = {
             status: dto.status,
-            attendeesCount: dto.attendeesCount,
+            attendeesCount,
             message: dto.message ?? null,
             respondedAt: new Date(),
           };
           const existingGuest = matches[0];
           if (existingGuest) {
-            await transaction.rsvp.create({ data: { guestId: existingGuest.id, ...rsvp } });
+            await transaction.rsvp.upsert({
+              where: { guestId: existingGuest.id },
+              create: { guestId: existingGuest.id, ...rsvp },
+              update: rsvp,
+            });
           } else {
             await transaction.guest.create({
               data: {
                 invitationId: invitation.id,
                 name: dto.name,
-                email: dto.email ?? null,
-                phone: dto.phone ?? null,
                 rsvp: { create: rsvp },
               },
               select: { id: true },
@@ -237,6 +305,31 @@ export class GuestsService {
     });
     if (!guest) throw new NotFoundException('Guest not found.');
     return guest;
+  }
+
+  private async ownedInvitationEventId(userId: string, invitationId: string): Promise<string> {
+    const invitation = await this.prisma.invitation.findFirst({
+      where: { id: invitationId, event: { userId } },
+      select: { eventId: true },
+    });
+    if (!invitation) throw new NotFoundException('Invitation not found.');
+    return invitation.eventId;
+  }
+
+  private manualPartySize(
+    status: 'ATTENDING' | 'PENDING' | 'NOT_ATTENDING',
+    partySize?: number
+  ): number {
+    if (status === 'ATTENDING') {
+      const count = partySize ?? 1;
+      if (count < 1)
+        throw new BadRequestException('Attending responses require at least one attendee.');
+      return count;
+    }
+    if (status === 'NOT_ATTENDING' && (partySize ?? 0) !== 0) {
+      throw new BadRequestException('Declined responses must have zero attendees.');
+    }
+    return status === 'PENDING' ? (partySize ?? 0) : 0;
   }
 
   private toResponse(guest: GuestResult): GuestResponse {

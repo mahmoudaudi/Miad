@@ -16,7 +16,7 @@ export function PublishCommunityForm({ invitationId }: { invitationId: string })
     setError(null);
     try {
       await publishCommunityDesign(invitationId, values);
-      router.push('/dashboard/community');
+      router.push('/dashboard/community/browse');
       router.refresh();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'We could not publish this design.');

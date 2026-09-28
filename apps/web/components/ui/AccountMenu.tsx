@@ -110,10 +110,6 @@ export function AccountMenu({
             <span className="material-symbols-outlined text-[16px]">mail</span>
             My Invitations
           </Link>
-          <Link className="miad-menu-item flex items-center gap-2 text-xs" href="/dashboard/events">
-            <span className="material-symbols-outlined text-[16px]">event</span>
-            Events
-          </Link>
         </>
       ) : null}
       <Link

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   BadGatewayException,
   ConflictException,
   HttpException,
@@ -10,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { InsufficientCreditsException } from '../billing/credits.service';
 import {
   INVITATION_AI_PROVIDER,
   AiGenerationCancelledError,
@@ -26,6 +28,7 @@ import {
 } from './ai-generation-progress.service';
 import { parseSmartAnalysis, type SmartAnalysis } from './smart-question.types';
 import type { AnalyzeAiStudioDto } from './dto/analyze-ai-studio.dto';
+import { explicitlyRequestsUploadedImages } from './ai-studio-image-context';
 
 export type AiStudioEventResponse = {
   id: string;
@@ -83,11 +86,18 @@ export class AiStudioService {
     @Optional() private readonly progress?: AiGenerationProgressService
   ) {}
 
+  getAiModels() {
+    return this.designs.getStitchModelOptions();
+  }
+
   async createFromPrompt(
     userId: string,
     prompt: string,
     generationId?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    modelPreference: 'auto' | string = 'auto',
+    idempotencyKey?: string,
+    imageIds: string[] = []
   ): Promise<AiStudioResponse> {
     const updateProgress = (
       stage: Exclude<AiGenerationStage, 'REQUEST_RECEIVED' | 'COMPLETED'>
@@ -96,8 +106,23 @@ export class AiStudioService {
     };
     if (generationId) this.progress?.begin(userId, generationId);
     updateProgress('ANALYZING_EVENT');
-    const details = await this.resolveEventDetails(prompt);
+    const details = await this.resolveEventDetails(prompt, 'auto');
     const slug = this.invitationSlug(details.title);
+    const requestedImageIds = explicitlyRequestsUploadedImages(prompt)
+      ? [...new Set(imageIds)].slice(0, 5)
+      : [];
+    const matchedImages = requestedImageIds.length
+      ? await this.prisma.invitationImage.findMany({
+          where: { id: { in: requestedImageIds }, userId, invitationId: null },
+          select: { id: true, fileName: true },
+        })
+      : [];
+    if (matchedImages.length !== requestedImageIds.length) {
+      throw new BadRequestException('One or more selected images are unavailable.');
+    }
+    const explicitImages = requestedImageIds.map((id) =>
+      matchedImages.find((image) => image.id === id)!
+    );
 
     let event;
     let invitation;
@@ -126,6 +151,15 @@ export class AiStudioService {
             publishedAt: null,
           },
         });
+        if (requestedImageIds.length) {
+          const claimed = await tx.invitationImage.updateMany({
+            where: { id: { in: requestedImageIds }, userId, invitationId: null },
+            data: { invitationId: createdInvitation.id },
+          });
+          if (claimed.count !== requestedImageIds.length) {
+            throw new BadRequestException('One or more selected images are unavailable.');
+          }
+        }
         return { event: createdEvent, invitation: createdInvitation };
       }));
     } catch (error) {
@@ -146,9 +180,21 @@ export class AiStudioService {
             invitation.id,
             prompt,
             updateProgress,
-            signal
+            signal,
+            modelPreference,
+            idempotencyKey,
+            ...(explicitImages.length ? [explicitImages] : [])
           )
-        : await this.designs.generateHtmlWithAi(userId, invitation.id, prompt, undefined, signal);
+        : await this.designs.generateHtmlWithAi(
+            userId,
+            invitation.id,
+            prompt,
+            undefined,
+            signal,
+            modelPreference,
+            idempotencyKey,
+            ...(explicitImages.length ? [explicitImages] : [])
+          );
       const response = {
         event: this.toEvent(event),
         invitation: this.toInvitation(invitation),
@@ -161,6 +207,9 @@ export class AiStudioService {
       // The caller cancelled its own request: no failure progress, no
       // fallback 201 payload, no provider-failure message. Just propagate.
       if (error instanceof AiGenerationCancelledError) throw error;
+      // Running out of credits is a billing answer, not a generation warning:
+      // it must reach the client as 402 instead of a 200 with aiError set.
+      if (error instanceof InsufficientCreditsException) throw error;
       if (error instanceof HttpException) {
         const safeError = this.progressError(error);
         if (generationId) this.progress?.fail(userId, generationId, safeError);
@@ -178,9 +227,26 @@ export class AiStudioService {
     }
   }
 
-  private progressError(error: unknown): string {
+  private progressError(
+    error: unknown,
+    operation: 'generation' | 'refinement' = 'generation'
+  ): string {
+    if (operation === 'refinement') {
+      if (error instanceof HttpException) {
+        const response = error.getResponse();
+        if (typeof response === 'string') return response;
+        if (response && typeof response === 'object' && 'message' in response) {
+          const message = response.message;
+          if (typeof message === 'string') return message;
+        }
+      }
+      return 'Unable to update the invitation. The previous design is still preserved.';
+    }
     if (error instanceof HttpException && /timed out/i.test(error.message)) {
       return 'The AI provider took too long to respond.';
+    }
+    if (error instanceof HttpException && /stitch/i.test(error.message)) {
+      return 'Stitch could not generate the invitation design. Please try again.';
     }
     return 'The website could not be generated. Please try again.';
   }
@@ -207,6 +273,7 @@ export class AiStudioService {
         })),
         lastQuestionId: dto.lastQuestionId,
         signal,
+        modelPreference: 'auto',
       });
     } catch (error) {
       // Cancellation stays neutral, and a configuration problem keeps its own
@@ -239,9 +306,76 @@ export class AiStudioService {
     userId: string,
     invitationId: string,
     prompt: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    generationId?: string,
+    _modelPreference: 'auto' | string = 'auto',
+    idempotencyKey?: string,
+    imageIds: string[] = []
   ): Promise<AiStudioRefineResponse> {
-    return this.designs.refineHtmlWithAi(userId, invitationId, prompt, signal);
+    if (generationId) {
+      this.progress?.begin(userId, generationId, 'refinement');
+      this.progress?.advance(userId, generationId, 'REFINEMENT_UNDERSTANDING');
+    }
+    try {
+      const requestedImageIds = explicitlyRequestsUploadedImages(prompt)
+        ? [...new Set(imageIds)].slice(0, 5)
+        : [];
+      if (requestedImageIds.length) {
+        const ownedInvitation = await this.prisma.invitation.findFirst({
+          where: { id: invitationId, event: { userId } },
+          select: { id: true },
+        });
+        if (!ownedInvitation) throw new BadRequestException('Invitation not found.');
+      }
+      const matchedImages = requestedImageIds.length
+        ? await this.prisma.invitationImage.findMany({
+            where: {
+              id: { in: requestedImageIds },
+              userId,
+              OR: [{ invitationId }, { invitationId: null }],
+            },
+            select: { id: true, fileName: true, invitationId: true },
+          })
+        : [];
+      if (matchedImages.length !== requestedImageIds.length) {
+        throw new BadRequestException('One or more selected images are unavailable.');
+      }
+      const pendingIds = matchedImages
+        .filter((image) => image.invitationId === null)
+        .map((image) => image.id);
+      if (pendingIds.length) {
+        const claimed = await this.prisma.invitationImage.updateMany({
+          where: { id: { in: pendingIds }, userId, invitationId: null },
+          data: { invitationId },
+        });
+        if (claimed.count !== pendingIds.length) {
+          throw new BadRequestException('One or more selected images are unavailable.');
+        }
+      }
+      const explicitImages = requestedImageIds.map((id) => {
+        const image = matchedImages.find((candidate) => candidate.id === id)!;
+        return { id: image.id, fileName: image.fileName };
+      });
+      const result = await this.designs.refineHtmlWithAi(
+        userId,
+        invitationId,
+        prompt,
+        signal,
+        (stage) => {
+          if (generationId) this.progress?.advance(userId, generationId, stage);
+        },
+        'auto',
+        idempotencyKey,
+        ...(explicitImages.length ? [explicitImages] : [])
+      );
+      if (generationId) this.progress?.complete(userId, generationId);
+      return result;
+    } catch (error) {
+      if (generationId && !(error instanceof AiGenerationCancelledError) && !signal?.aborted) {
+        this.progress?.fail(userId, generationId, this.progressError(error, 'refinement'));
+      }
+      throw error;
+    }
   }
 
   /**
@@ -249,7 +383,10 @@ export class AiStudioService {
    * invalid output) falls back to deterministic details so creation never
    * depends on AI availability.
    */
-  private async resolveEventDetails(prompt: string): Promise<{
+  private async resolveEventDetails(
+    prompt: string,
+    modelPreference: 'auto' | string
+  ): Promise<{
     title: string;
     eventType: string;
     eventDate: Date;
@@ -257,7 +394,7 @@ export class AiStudioService {
   }> {
     let raw: Record<string, unknown> = {};
     try {
-      const extracted = await this.aiProvider.extractEventDetails(prompt);
+      const extracted = await this.aiProvider.extractEventDetails(prompt, modelPreference);
       if (extracted && typeof extracted === 'object') raw = extracted;
     } catch {
       // Fall through to deterministic defaults below.

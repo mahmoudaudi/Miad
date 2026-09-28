@@ -70,6 +70,25 @@ describe('auth client', () => {
     ]);
   });
 
+  it('clears the pending AI prompt on logout so the next account never inherits it', async () => {
+    const values = new Map<string, string>([['miad.pending-invitation-prompt', 'x']]);
+    vi.stubGlobal('window', {
+      sessionStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          values.set(key, value);
+        },
+        removeItem: (key: string) => {
+          values.delete(key);
+        },
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ status: 'ok' }, 200)));
+
+    await expect(logout()).resolves.toEqual({ status: 'ok' });
+    expect(values.has('miad.pending-invitation-prompt')).toBe(false);
+  });
+
   it('surfaces server failures while treating only 401 as anonymous', async () => {
     vi.stubGlobal(
       'fetch',

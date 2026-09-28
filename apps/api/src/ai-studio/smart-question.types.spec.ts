@@ -65,13 +65,16 @@ describe('parseSmartAnalysis', () => {
     ).toBeNull();
   });
 
-  it('rejects options that are not well-formed objects', () => {
+  it('keeps usable options and drops unusable option entries', () => {
     expect(
       parseSmartAnalysis({ status: 'QUESTION', question: question({ options: ['Luxury', 42] }) })
-    ).toBeNull();
+    ).toMatchObject({
+      status: 'QUESTION',
+      question: { options: [{ label: 'Luxury', value: 'Luxury' }] },
+    });
   });
 
-  it('rejects options missing a usable label', () => {
+  it('drops malformed options while retaining choices the UI can render', () => {
     expect(
       parseSmartAnalysis({
         status: 'QUESTION',
@@ -82,23 +85,31 @@ describe('parseSmartAnalysis', () => {
           ],
         }),
       })
-    ).toBeNull();
+    ).toMatchObject({
+      status: 'QUESTION',
+      question: { options: [{ label: 'B', value: 'B' }] },
+    });
   });
 
-  it('rejects a free-form question that ships options', () => {
+  it('ignores irrelevant options on a free-form question', () => {
     expect(
       parseSmartAnalysis({
         status: 'QUESTION',
         question: question({ type: 'date', options: [{ label: 'A', value: 'A' }] }),
       })
-    ).toBeNull();
+    ).toMatchObject({ status: 'QUESTION', question: { type: 'date', options: [] } });
   });
 
-  it('rejects a question with a missing or malformed id or text', () => {
-    expect(parseSmartAnalysis({ status: 'QUESTION', question: question({ id: '' }) })).toBeNull();
+  it('normalizes a malformed id and still requires usable question text', () => {
+    expect(
+      parseSmartAnalysis({ status: 'QUESTION', question: question({ id: '' }) })
+    ).toMatchObject({
+      status: 'QUESTION',
+      question: { id: 'smart-question' },
+    });
     expect(
       parseSmartAnalysis({ status: 'QUESTION', question: question({ id: 'Not Kebab' }) })
-    ).toBeNull();
+    ).toMatchObject({ status: 'QUESTION', question: { id: 'not-kebab' } });
     expect(parseSmartAnalysis({ status: 'QUESTION', question: question({ text: '' }) })).toBeNull();
     expect(parseSmartAnalysis({ status: 'QUESTION', collectedData: {} })).toBeNull();
   });
@@ -149,9 +160,8 @@ describe('parseSmartAnalysis', () => {
     );
   });
 
-  it('still rejects a response with no recognisable status token', () => {
+  it('rejects a response with no supported status token', () => {
     expect(parseSmartAnalysis({ statusCode: 200, collectedData: {} })).toBeNull();
-    expect(parseSmartAnalysis({ state: 'READY', collectedData: {} })).toBeNull();
     expect(parseSmartAnalysis({ status: '', collectedData: {} })).toBeNull();
     expect(parseSmartAnalysis({ status: 'DONE', collectedData: {} })).toBeNull();
   });
@@ -172,6 +182,82 @@ describe('parseSmartAnalysis', () => {
       question: null,
       collectedData: { eventType: 'Wedding', names: ['Ahmad', 'Sara'], date: '2026-12-20' },
     });
+  });
+
+  it('ignores harmless extra fields in a valid response', () => {
+    expect(
+      parseSmartAnalysis({
+        status: 'READY',
+        collectedData: { eventType: 'Wedding' },
+        confidence: 0.93,
+        explanation: 'Enough details are present.',
+        question: { unexpected: true },
+      })
+    ).toEqual({ status: 'READY', collectedData: { eventType: 'Wedding' }, question: null });
+  });
+
+  it('normalizes common field names, status aliases, and string choices', () => {
+    expect(
+      parseSmartAnalysis({
+        state: 'ask',
+        collected_data: { eventType: 'Dinner', ignored: { unsafe: true } },
+        next_question: {
+          questionId: 'event style',
+          prompt: 'What style should the invitation use?',
+          questionType: 'select',
+          choices: ['Modern', 'Classic'],
+          unrelated: 'ignored',
+        },
+      })
+    ).toEqual({
+      status: 'QUESTION',
+      collectedData: { eventType: 'Dinner' },
+      question: {
+        id: 'event-style',
+        text: 'What style should the invitation use?',
+        type: 'single_select',
+        options: [
+          { label: 'Modern', value: 'Modern' },
+          { label: 'Classic', value: 'Classic' },
+        ],
+        allowOther: false,
+      },
+    });
+  });
+
+  it('defaults absent optional question and brief fields safely', () => {
+    expect(
+      parseSmartAnalysis({ status: 'QUESTION', question: { text: 'What else matters?' } })
+    ).toEqual({
+      status: 'QUESTION',
+      collectedData: {},
+      question: {
+        id: 'smart-question',
+        text: 'What else matters?',
+        type: 'text',
+        options: [],
+        allowOther: false,
+      },
+    });
+  });
+
+  it('rejects results that cannot be converted into a usable question', () => {
+    expect(
+      parseSmartAnalysis({
+        status: 'QUESTION',
+        question: { text: 'Choose one', type: 'single_select', options: [null, 42] },
+      })
+    ).toBeNull();
+    expect(
+      parseSmartAnalysis({ status: 'QUESTION', question: { text: 'Question?', type: 'slider' } })
+    ).toBeNull();
+    expect(parseSmartAnalysis({ status: '__proto__', question: question() })).toBeNull();
+    expect(
+      parseSmartAnalysis({
+        status: 'QUESTION',
+        question: { text: 'Question?', type: 'constructor' },
+      })
+    ).toBeNull();
   });
 
   it('clamps and drops unusable collected data instead of passing it through', () => {

@@ -43,8 +43,9 @@ model User {
   role                Role                 @relation(fields: [roleId], references: [id])
   events              Event[]
   notifications       Notification[]
-  mediaAssets         MediaAsset[]
+  invitationImages    InvitationImage[]
   aiUsage             AiUsage[]
+  creditAccount       CreditAccount?
   subscriptions       Subscription[]
   communityDesigns    CommunityDesign[]
   oauthAccounts       OAuthAccount[]
@@ -89,7 +90,7 @@ model Invitation {
   event           Event              @relation(fields: [eventId], references: [id])
   designs         InvitationDesign[]
   guests          Guest[]
-  media           MediaAsset[]
+  images          InvitationImage[]
   aiUsage         AiUsage[]
   views           InvitationView[]
   communityDesign CommunityDesign?
@@ -159,21 +160,22 @@ model Notification {
   @@map("notifications")
 }
 
-model MediaAsset {
+model InvitationImage {
   id           String   @id @default(uuid()) @db.Uuid
   userId       String   @map("user_id") @db.Uuid
-  invitationId String   @map("invitation_id") @db.Uuid
+  invitationId String?  @map("invitation_id") @db.Uuid
   fileName     String   @map("file_name") @db.VarChar(255)
   fileUrl      String   @map("file_url") @db.Text
   fileType     String   @map("file_type") @db.VarChar(100)
   fileSize     BigInt   @map("file_size")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  user       User       @relation(fields: [userId], references: [id])
-  invitation Invitation @relation(fields: [invitationId], references: [id])
+  user       User        @relation(fields: [userId], references: [id])
+  invitation Invitation? @relation(fields: [invitationId], references: [id])
 
   @@index([invitationId])
-  @@map("media_assets")
+  @@index([userId, invitationId, createdAt])
+  @@map("invitation_images")
 }
 
 model Template {
@@ -244,19 +246,65 @@ model PasswordResetToken {
 }
 
 model AiUsage {
-  id            String   @id @default(uuid()) @db.Uuid
-  userId        String   @map("user_id") @db.Uuid
-  invitationId  String   @map("invitation_id") @db.Uuid
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  invitationId    String    @map("invitation_id") @db.Uuid
   /// GENERATE_DESIGN | EDIT_DESIGN
-  operationType String   @map("operation_type") @db.VarChar(50)
-  status        String   @db.VarChar(30)
-  tokensUsed    Int?     @map("tokens_used")
-  createdAt     DateTime @default(now()) @map("created_at")
+  operationType   String    @map("operation_type") @db.VarChar(50)
+  /// PENDING | SUCCEEDED | FAILED | CANCELLED
+  status          String    @db.VarChar(30)
+  tokensUsed      Int?      @map("tokens_used")
+  idempotencyKey  String?   @unique @map("idempotency_key") @db.VarChar(120)
+  creditsReserved Int       @default(0) @map("credits_reserved")
+  creditsCharged  Int       @default(0) @map("credits_charged")
+  creditsRefunded Int       @default(0) @map("credits_refunded")
+  provider        String?   @db.VarChar(50)
+  model           String?   @db.VarChar(120)
+  completedAt     DateTime? @map("completed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
   user       User       @relation(fields: [userId], references: [id])
   invitation Invitation @relation(fields: [invitationId], references: [id])
 
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
   @@map("ai_usage")
+}
+
+/// Materialized current credit balance. Every balance change must have a
+/// matching immutable CreditLedgerEntry in the same transaction.
+model CreditAccount {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  balance   Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user          User                @relation(fields: [userId], references: [id])
+  ledgerEntries CreditLedgerEntry[]
+
+  @@map("credit_accounts")
+}
+
+/// Append-only financial history. Corrections are compensating entries, never
+/// updates or deletes.
+model CreditLedgerEntry {
+  id              String   @id @default(uuid()) @db.Uuid
+  creditAccountId String   @map("credit_account_id") @db.Uuid
+  aiUsageId       String?  @map("ai_usage_id") @db.Uuid
+  idempotencyKey  String   @unique @map("idempotency_key") @db.VarChar(140)
+  /// GRANT | RESERVATION | REFUND
+  entryType       String   @map("entry_type") @db.VarChar(30)
+  amount          Int
+  balanceAfter    Int      @map("balance_after")
+  reason          String?  @db.VarChar(255)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  creditAccount CreditAccount @relation(fields: [creditAccountId], references: [id])
+
+  @@index([creditAccountId, createdAt])
+  @@index([aiUsageId])
+  @@map("credit_ledger_entries")
 }
 
 model InvitationView {

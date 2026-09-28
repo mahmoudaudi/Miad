@@ -22,7 +22,14 @@ function makeService(prisma: Record<string, unknown>) {
     getOrThrow: (key: string) =>
       ({ JWT_ACCESS_SECRET: 'a'.repeat(32), JWT_REFRESH_SECRET: 'b'.repeat(32) })[key],
   };
-  return new AuthService(prisma as never, new JwtService({}), config as never);
+  return new AuthService(
+    prisma as never,
+    new JwtService({}),
+    config as never,
+    // The Google sign-in path grants free credits via this service; these tests
+    // do not assert on balances, so a no-op stand-in is enough.
+    { grantFreeCreditsSafely: async () => undefined } as never
+  );
 }
 
 function mockGoogleFetch() {

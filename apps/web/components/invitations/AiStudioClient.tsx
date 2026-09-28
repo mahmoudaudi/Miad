@@ -6,30 +6,52 @@ import { useDashboardSession, useWorkspaceActions } from '@/components/dashboard
 import { ApiError } from '@/lib/api-client';
 import {
   generateAiStudio,
+  getAiStudioModels,
+  readAiStudioModelPreference,
+  saveAiStudioModelPreference,
   analyzeAiStudio,
+  aiStudioProjectHref,
+  aiStudioUrlWithoutInvitation,
   buildGenerationContext,
+  captureAiStudioComposerSubmission,
   createAiGenerationId,
+  getAiStudioProjectId,
+  invitationDesignPreviewUrl,
   observeAiGeneration,
   refineAiStudio,
-  resolveMediaElements,
+  resolveAiStudioRequestMode,
+  resolveStudioSessionTransition,
+  restoreAiStudioComposerSubmission,
+  resolveInvitationImageElements,
+  explicitlyRequestsUploadedImages,
   withHeroImage,
   type AiStudioResult,
   type AiGenerationProgress,
   type SmartAnswer,
   type SmartCollectedData,
   type SmartQuestion,
+  type AiStudioModelOption,
+  type AiStudioComposerSubmission,
 } from '@/lib/ai-studio';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLocale } from '@/lib/i18n/LocaleProvider';
 import {
-  completeMediaUpload,
-  listMedia,
-  requestMediaUpload,
-  uploadToSignedTarget,
-  validateMediaFile,
-} from '@/lib/media';
+  completePendingImageUpload,
+  completeImageUpload,
+  removeInvitationImage,
+  removePendingImage,
+  requestPendingImageUpload,
+  requestImageUpload,
+  uploadImageToSignedTarget,
+  validateImageFile,
+  type InvitationImage,
+} from '@/lib/invitation-images';
 import {
+  completeInvitationSpecification,
+  generateInvitationDesign,
+  getInvitationDesign,
   saveInvitationEditor,
+  refineInvitationDesign,
   type GeneratedWebsiteProject,
   type InvitationDesignSpecification,
 } from '@/lib/invitation-designs';
@@ -38,10 +60,9 @@ import {
   clearPendingInvitationPrompt,
   readPendingInvitationPrompt,
 } from '@/lib/pending-invitation-prompt';
-import { listInvitations, updateInvitationPublication } from '@/lib/invitations';
+import { getInvitation, listInvitations, updateInvitationPublication } from '@/lib/invitations';
 import {
   AiStudioView,
-  isValidEditInstruction,
   type StudioMessage,
   type StudioPreview,
   type StudioQuestionPhase,
@@ -73,6 +94,15 @@ function speechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   const scoped = window as unknown as Record<string, unknown>;
   const ctor = scoped.SpeechRecognition ?? scoped.webkitSpeechRecognition ?? null;
   return typeof ctor === 'function' ? (ctor as unknown as SpeechRecognitionConstructor) : null;
+}
+
+function refinementSuccessMessage(title: string, instruction: string): string {
+  const cleanInstruction = instruction.trim().replace(/\s+/g, ' ');
+  const summary =
+    cleanInstruction.length > 112
+      ? `${cleanInstruction.slice(0, 109).trimEnd()}…`
+      : cleanInstruction;
+  return `Done. I updated “${title}” as requested: ${summary}`;
 }
 
 export function AiStudioClient() {
@@ -110,28 +140,41 @@ export function AiStudioClient() {
       `${user.firstName.trim().charAt(0)}${user.lastName.trim().charAt(0)}`.toUpperCase() || 'M',
   };
   const [prompt, setPrompt] = useState('');
+  const [modelOptions, setModelOptions] = useState<AiStudioModelOption[]>([]);
+  const [modelPreference, setModelPreference] = useState('auto');
+  const [modelSelectionLoading, setModelSelectionLoading] = useState(true);
+  const [modelConfigurationLoaded, setModelConfigurationLoaded] = useState(false);
   const [messages, setMessages] = useState<StudioMessage[]>([]);
   const [preview, setPreview] = useState<StudioPreview>({ status: 'empty' });
   const [working, setWorking] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [failed, setFailed] = useState<{ invitationId: string; message: string } | null>(null);
   const [invitationId, setInvitationId] = useState<string | null>(null);
+  const [projectLoading, setProjectLoading] = useState(false);
   const [spec, setSpec] = useState<InvitationDesignSpecification | null>(null);
   const [websiteProject, setWebsiteProject] = useState<GeneratedWebsiteProject | null>(null);
   const [generationProgress, setGenerationProgress] = useState<AiGenerationProgress | null>(null);
   const [eventType, setEventType] = useState<string | null>(null);
-  const [mediaPreviews, setMediaPreviews] = useState<Record<string, string>>({});
+  const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const [imageUrl, setImageUrl] = useState('');
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [imageNotice, setImageNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [attachedImages, setAttachedImages] = useState<
+    Array<InvitationImage & { scope: 'pending' | 'invitation' }>
+  >([]);
   const [recentInvitations, setRecentInvitations] = useState<StudioRecentInvitation[]>([]);
   const [recentProjectsLoading, setRecentProjectsLoading] = useState(true);
   const communitySlug = searchParams.get('community');
+  const openedCommunityClone = searchParams.get('cloned') === '1';
+  const selectedInvitationId = getAiStudioProjectId(searchParams);
   const [micSupported, setMicSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const autoSent = useRef(false);
+  const loadedProjectIdRef = useRef<string | null>(null);
+  // Identity that the currently loaded project state belongs to. Project
+  // state must never survive an account switch without a reload.
+  const loadedUserIdRef = useRef<string | null>(null);
   const sendInFlight = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const dictationBaseRef = useRef('');
@@ -140,6 +183,13 @@ export function AiStudioClient() {
   // Real cancellation, scoped to this studio instance's current request:
   // aborting this controller aborts the active generation HTTP request.
   const requestControllerRef = useRef<AbortController | null>(null);
+  // Identity of the generation currently allowed to mutate the canvas. Stop
+  // and a new run both advance it, so a response that resolves late belongs to
+  // a run that no longer owns the UI and must be ignored.
+  const runTokenRef = useRef(0);
+  // The run that Stop has already reset the UI for, so the request's own abort
+  // handler does not restore state (or announce cancellation) a second time.
+  const cancelledRunRef = useRef<number | null>(null);
   const previewBeforeSendRef = useRef<StudioPreview>({ status: 'empty' });
   // Smart Question Flow: the session lives in client state only, so nothing
   // is persisted and no invitation exists until generation actually starts.
@@ -150,7 +200,51 @@ export function AiStudioClient() {
     collectedData: SmartCollectedData;
     answers: SmartAnswer[];
   } | null>(null);
+  const generationSubmissionRef = useRef<AiStudioComposerSubmission<
+    InvitationImage & { scope: 'pending' | 'invitation' }
+  > | null>(null);
   const [questionDisabled, setQuestionDisabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setModelSelectionLoading(true);
+    void getAiStudioModels()
+      .then((configuration) => {
+        if (!active) return;
+        setModelOptions(configuration.models);
+        setModelPreference(readAiStudioModelPreference(user.id, configuration.models));
+        setModelConfigurationLoaded(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setModelOptions([]);
+        setModelPreference('auto');
+        setModelConfigurationLoaded(true);
+      })
+      .finally(() => {
+        if (active) setModelSelectionLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user.id]);
+
+  useEffect(() => {
+    if (!modelConfigurationLoaded) return;
+    saveAiStudioModelPreference(user.id, modelPreference, modelOptions);
+  }, [modelConfigurationLoaded, modelOptions, modelPreference, user.id]);
+
+  const changeModelPreference = useCallback(
+    (value: string) => {
+      if (
+        value === 'auto' ||
+        modelOptions.some((option) => option.id === value && option.available)
+      ) {
+        setModelPreference(value);
+      }
+    },
+    [modelOptions]
+  );
 
   useEffect(() => {
     setMicSupported(speechRecognitionConstructor() !== null);
@@ -211,21 +305,21 @@ export function AiStudioClient() {
 
   useEffect(() => {
     let active = true;
+    setRecentProjectsLoading(true);
     void listInvitations()
       .then((invitations) => {
         if (!active) return;
         setRecentInvitations(
-          invitations.map((invitation) => ({
+          invitations.slice(0, 3).map((invitation) => ({
             id: invitation.id,
             title: invitation.event.title,
-            eventDate: invitation.event.eventDate,
-            status: invitation.status,
-            updatedAt: invitation.updatedAt,
-            hasDesign: invitation.hasDesign,
           }))
         );
       })
       .catch((caught) => {
+        if (!active) return;
+        // On identity change the previous account's list must not linger.
+        setRecentInvitations([]);
         if (caught instanceof ApiError && caught.status === 401) {
           router.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
         }
@@ -236,7 +330,177 @@ export function AiStudioClient() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, user.id]);
+
+  // Clears every piece of state derived from the loaded invitation so a
+  // previous account's project, messages, canvas, or publish URL can never
+  // linger. In-flight requests are aborted; their handlers already exit
+  // early on abort instead of applying stale results.
+  const resetProjectState = useCallback(() => {
+    loadedProjectIdRef.current = null;
+    requestControllerRef.current?.abort();
+    progressStopRef.current?.();
+    progressStopRef.current = null;
+    sendInFlight.current = false;
+    setWorking(false);
+    setInvitationId(null);
+    setSpec(null);
+    setWebsiteProject(null);
+    setMessages([]);
+    setPreview({ status: 'empty' });
+    setFailed(null);
+    setPrompt('');
+    setHint(null);
+    setImageNotice(null);
+    setImagePreviews({});
+    setImageUrl('');
+    setAttachedImages([]);
+    setGenerationProgress(null);
+    setPublishUrl(null);
+    setInvitationIsPublished(false);
+    setActiveDesignVersion(null);
+    setPublishedDesignVersion(null);
+    setEventType(null);
+    setQuestion(null);
+    setQuestionPhase('IDLE');
+    questionSessionRef.current = null;
+    generationSubmissionRef.current = null;
+  }, []);
+
+  // Binds loaded project state to the authenticated identity. When the
+  // account changes underneath a mounted studio (logout/login, tab switch),
+  // the previous account's state is dropped immediately and its invitationId
+  // is stripped from the URL; any reload then goes through the owner-scoped
+  // API, which rejects foreign invitation ids.
+  useEffect(() => {
+    const transition = resolveStudioSessionTransition(loadedUserIdRef.current, user.id);
+    loadedUserIdRef.current = user.id;
+    if (transition !== 'reset') return;
+    resetProjectState();
+    if (getAiStudioProjectId(searchParams)) {
+      router.replace(aiStudioUrlWithoutInvitation(searchParams.toString()));
+    }
+  }, [user.id, router, searchParams, resetProjectState]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedInvitationId) {
+      if (loadedProjectIdRef.current) {
+        resetProjectState();
+      }
+      setProjectLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    loadedProjectIdRef.current = selectedInvitationId;
+    requestControllerRef.current?.abort();
+    progressStopRef.current?.();
+    progressStopRef.current = null;
+    setProjectLoading(true);
+    setInvitationId(null);
+    setSpec(null);
+    setWebsiteProject(null);
+    setMessages([]);
+    setPreview({ status: 'empty' });
+    setFailed(null);
+    setPrompt('');
+    setHint(null);
+    setImageNotice(null);
+    setAttachedImages([]);
+    setQuestion(null);
+    setQuestionPhase('IDLE');
+    questionSessionRef.current = null;
+    generationSubmissionRef.current = null;
+    setPublishUrl(null);
+    setInvitationIsPublished(false);
+    setActiveDesignVersion(null);
+    setPublishedDesignVersion(null);
+    setEventType(null);
+
+    void Promise.all([
+      getInvitation(selectedInvitationId),
+      getInvitationDesign(selectedInvitationId),
+    ])
+      .then(([invitation, result]) => {
+        if (!active) return;
+        const design = result.design;
+        const published = invitation.status === 'PUBLISHED' && Boolean(invitation.publishedAt);
+        setInvitationId(invitation.id);
+        setInvitationIsPublished(published);
+        setActiveDesignVersion(design?.version ?? null);
+        setPublishedDesignVersion(published ? (invitation.publishedDesignVersion ?? null) : null);
+        if (published) {
+          setPublishUrl(`${window.location.origin}/invite/${encodeURIComponent(invitation.slug)}`);
+        }
+
+        if (design && 'artifact' in design) {
+          setWebsiteProject(design.project);
+          setPreview({
+            status: 'ready',
+            title: design.artifact.title,
+            artifact: design.artifact,
+            renderUrl: invitationDesignPreviewUrl(invitation.id, design.version),
+          });
+          setMessages([
+            {
+              role: 'ai',
+              text: openedCommunityClone
+                ? `This is your independent copy of a Community design. Changes here will not affect the original. Your design is ready to edit.`
+                : `Welcome back to “${invitation.event.title}.” Your saved design version ${design.version} is loaded. Describe what you would like to change.`,
+            },
+          ]);
+          setFailed(null);
+        } else if (design) {
+          const specification = completeInvitationSpecification(design.designSpecification);
+          setSpec(specification);
+          setPreview({
+            status: 'ready',
+            title: specification.content.title || invitation.event.title,
+            specification,
+          });
+          setMessages([
+            {
+              role: 'ai',
+              text: openedCommunityClone
+                ? `This is your independent copy of a Community design. Changes here will not affect the original. Your design is ready to edit.`
+                : `Welcome back to “${invitation.event.title}.” Your saved design version ${design.version} is loaded. Describe what you would like to change.`,
+            },
+          ]);
+          setFailed(null);
+        } else {
+          const message =
+            'This project has no saved design yet. Describe the design you want to create.';
+          setPreview({ status: 'failed' });
+          setFailed(null);
+          setMessages([{ role: 'ai', text: message }]);
+        }
+      })
+      .catch((caught) => {
+        if (!active) return;
+        if (caught instanceof ApiError && caught.status === 401) {
+          router.replace(
+            `/login?next=${encodeURIComponent(`/dashboard/invitations/new?invitationId=${selectedInvitationId}`)}`
+          );
+          return;
+        }
+        const message =
+          caught instanceof ApiError && caught.status !== 404 && caught.status !== 403
+            ? 'This project could not be loaded. Please try again.'
+            : 'This project is unavailable or you do not have access to it.';
+        setPreview({ status: 'failed' });
+        setFailed(null);
+        setMessages([{ role: 'ai', text: message }]);
+      })
+      .finally(() => {
+        if (active) setProjectLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [router, selectedInvitationId, openedCommunityClone, resetProjectState]);
 
   const applyResult = useCallback(
     (result: AiStudioResult, communitySpecification?: InvitationDesignSpecification) => {
@@ -246,11 +510,10 @@ export function AiStudioClient() {
         result.invitation.status === 'PUBLISHED' && Boolean(result.invitation.publishedAt)
       );
       setActiveDesignVersion(result.design?.version ?? null);
-      setPublishedDesignVersion(
-        result.invitation.status === 'PUBLISHED' && result.invitation.publishedAt
-          ? (result.design?.version ?? null)
-          : null
-      );
+      setPublishedDesignVersion(result.invitation.publishedDesignVersion ?? null);
+      // The invitation is the durable project identity. Keep it in the route
+      // so refresh, navigation, and re-authentication reopen refinement mode.
+      router.replace(aiStudioProjectHref(result.invitation.id));
       setEventType(result.event.eventType);
       if (communitySpecification) {
         setSpec(communitySpecification);
@@ -273,7 +536,7 @@ export function AiStudioClient() {
           status: 'ready',
           title: artifact.title,
           artifact,
-          renderUrl: `/api/designs/${result.invitation.id}/render`,
+          renderUrl: invitationDesignPreviewUrl(result.invitation.id, result.design.version),
         });
         setMessages((current) => [
           ...current,
@@ -292,7 +555,7 @@ export function AiStudioClient() {
         });
       }
     },
-    []
+    [router]
   );
 
   /**
@@ -302,160 +565,227 @@ export function AiStudioClient() {
    */
   const runGeneration = useCallback(
     async (text: string, controller: AbortController) => {
+      const submission = generationSubmissionRef.current
+        ? { ...generationSubmissionRef.current, generationContext: text }
+        : captureAiStudioComposerSubmission(prompt, text, attachedImages);
+      generationSubmissionRef.current = submission;
+      const explicitImageIds = explicitlyRequestsUploadedImages(text)
+        ? submission.selectedImageIds
+        : [];
+      const restoreComposer = (claimedImageIds: string[] = []) => {
+        const restored = restoreAiStudioComposerSubmission(submission, claimedImageIds);
+        setPrompt(restored.prompt);
+        setAttachedImages(restored.images);
+      };
+      requestControllerRef.current = controller;
       previewBeforeSendRef.current = preview;
       sendInFlight.current = true;
       setWorking(true);
-      setPreview({ status: 'working' });
+      // This run owns the canvas until it is cancelled or a newer run starts.
+      const runToken = (runTokenRef.current += 1);
+      cancelledRunRef.current = null;
+      // A response from an earlier run must never write to the canvas.
+      const ownsCanvas = () => runTokenRef.current === runToken;
+      setPrompt('');
+      setAttachedImages([]);
+      setPreview({
+        status: 'working',
+        operation: invitationId ? 'refine' : 'generate',
+        ...(preview.status === 'ready' ? { previous: preview } : {}),
+      });
       let stopProgress: (() => void) | null = null;
+      let claimedImageIds = invitationId ? explicitImageIds : [];
       try {
         if (invitationId && websiteProject) {
+          const generationId = createAiGenerationId();
+          setGenerationProgress(null);
+          stopProgress = observeAiGeneration(generationId, (update) => {
+            // Wait for the refinement response before claiming the canvas is
+            // updated. The server completion only confirms the version save.
+            if (update.status === 'COMPLETED') return;
+            setGenerationProgress(update);
+          });
+          progressStopRef.current = stopProgress;
           const design = await refineAiStudio(
-            { invitationId, website: websiteProject, prompt: text },
+            {
+              invitationId,
+              website: websiteProject,
+              prompt: text,
+              generationId,
+              modelPreference: 'auto',
+              imageIds: explicitImageIds,
+            },
             controller.signal
           );
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || !ownsCanvas()) {
+            restoreComposer(claimedImageIds);
+            return;
+          }
           setSpec(null);
           setWebsiteProject(design.project);
+          setActiveDesignVersion(design.version);
           setPreview({
             status: 'ready',
             title: design.artifact.title,
             artifact: design.artifact,
-            renderUrl: `/api/designs/${invitationId}/render`,
+            renderUrl: invitationDesignPreviewUrl(invitationId, design.version),
+          });
+          setGenerationProgress((current) =>
+            current?.operation === 'refinement'
+              ? {
+                  ...current,
+                  stage: 'REFINEMENT_PREVIEW_UPDATED',
+                  status: 'COMPLETED',
+                  occurredAt: new Date().toISOString(),
+                }
+              : current
+          );
+          setMessages((current) => [
+            ...current,
+            { role: 'ai', text: refinementSuccessMessage(design.artifact.title, text) },
+          ]);
+          setFailed(null);
+          generationSubmissionRef.current = null;
+          questionSessionRef.current = null;
+        } else if (invitationId) {
+          const design = spec
+            ? await refineInvitationDesign(invitationId, text, 'auto', controller.signal)
+            : await generateInvitationDesign(
+                invitationId,
+                {
+                  prompt: text,
+                  mode: 'generate',
+                  modelPreference: 'auto',
+                },
+                controller.signal
+              );
+          if (controller.signal.aborted || !ownsCanvas()) {
+            restoreComposer(claimedImageIds);
+            return;
+          }
+          const specification = completeInvitationSpecification(design.designSpecification);
+          setSpec(specification);
+          setWebsiteProject(null);
+          setActiveDesignVersion(design.version);
+          setPreview({
+            status: 'ready',
+            title: specification.content.title,
+            specification,
           });
           setMessages((current) => [
             ...current,
-            { role: 'ai', text: `Updated — “${design.artifact.title}” reflects your changes.` },
+            {
+              role: 'ai',
+              text: refinementSuccessMessage(specification.content.title, text),
+            },
           ]);
+          setFailed(null);
+          generationSubmissionRef.current = null;
+          questionSessionRef.current = null;
         } else {
           const generationId = createAiGenerationId();
           setGenerationProgress(null);
           stopProgress = observeAiGeneration(generationId, setGenerationProgress);
           progressStopRef.current = stopProgress;
-          const result = await generateAiStudio(text, generationId, controller.signal);
-          if (controller.signal.aborted) return;
+          const result = await generateAiStudio(
+            text,
+            generationId,
+            controller.signal,
+            modelPreference,
+            explicitImageIds
+          );
+          claimedImageIds = explicitImageIds;
+          if (controller.signal.aborted || !ownsCanvas()) {
+            restoreComposer(claimedImageIds);
+            return;
+          }
           const communitySpecification = communitySlug
             ? (await applyCommunityDesign(communitySlug, result.invitation.id)).designSpecification
             : undefined;
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || !ownsCanvas()) {
+            restoreComposer(claimedImageIds);
+            return;
+          }
           applyResult(result, communitySpecification);
+          if (result.design || communitySpecification) {
+            generationSubmissionRef.current = null;
+            questionSessionRef.current = null;
+          } else {
+            restoreComposer(claimedImageIds);
+          }
         }
       } catch (caught) {
         if (controller.signal.aborted) {
-          // User cancellation: close this request's SSE listener, return to
-          // idle, and stay neutral — never a provider-failure message, and a
-          // late result is ignored so no design is applied after cancelling.
+          // Stop already returned the UI to idle synchronously, so this handler
+          // only has to close the listener. A repeated Stop, or an abort with no
+          // user cancellation (a superseded run), must stay neutral and quiet.
+          const alreadyCancelled = cancelledRunRef.current === runToken;
+          cancelledRunRef.current = null;
+          if (alreadyCancelled) return;
           if (stopProgress) {
             stopProgress();
             if (progressStopRef.current === stopProgress) progressStopRef.current = null;
           }
           setGenerationProgress(null);
           setPreview(previewBeforeSendRef.current);
+          restoreComposer(claimedImageIds);
           setMessages((current) => [...current, { role: 'ai', text: 'Generation cancelled.' }]);
           return;
         }
         if (caught instanceof ApiError && caught.status === 401) {
-          router.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
+          restoreComposer(claimedImageIds);
+          const projectId = invitationId ?? selectedInvitationId;
+          const projectHref = projectId
+            ? aiStudioProjectHref(projectId)
+            : '/dashboard/invitations/new';
+          router.replace(`/login?next=${encodeURIComponent(projectHref)}`);
           return;
         }
-        setPreview({ status: 'empty' });
-        setMessages((current) => [
-          ...current,
-          {
-            role: 'ai',
-            text:
-              caught instanceof ApiError
-                ? caught.message
-                : 'Something went wrong. Check your connection and try again.',
-          },
-        ]);
-      } finally {
-        if (requestControllerRef.current === controller) requestControllerRef.current = null;
-        sendInFlight.current = false;
-        setWorking(false);
-      }
-    },
-    [applyResult, communitySlug, invitationId, preview, router, websiteProject]
-  );
-
-  const regenerateDesign = useCallback(
-    async (instruction: string) => {
-      const cleanInstruction = instruction.trim();
-      if (!isValidEditInstruction(cleanInstruction)) {
-        setHint('Describe a design change using 3 to 1000 characters.');
-        return;
-      }
-      if (
-        !invitationId ||
-        !websiteProject ||
-        preview.status !== 'ready' ||
-        working ||
-        sendInFlight.current
-      )
-        return;
-      const previousPreview = preview;
-      const controller = new AbortController();
-      requestControllerRef.current?.abort();
-      requestControllerRef.current = controller;
-      sendInFlight.current = true;
-      setHint(null);
-      setWorking(true);
-      setGenerationProgress(null);
-      setPreview({ status: 'working', operation: 'refine' });
-      setMessages((current) => [...current, { role: 'user', text: cleanInstruction }]);
-      try {
-        const design = await refineAiStudio(
-          { invitationId, website: websiteProject, prompt: cleanInstruction },
-          controller.signal
+        const safeMessage =
+          caught instanceof ApiError
+            ? caught.message
+            : 'Something went wrong. Check your connection and try again.';
+        setGenerationProgress((current) =>
+          current?.operation === 'refinement' && current.status === 'ACTIVE'
+            ? { ...current, status: 'FAILED', errorMessage: safeMessage }
+            : current
         );
-        if (controller.signal.aborted) return;
-        setWebsiteProject(design.project);
-        setActiveDesignVersion(design.version);
-        setPreview({
-          status: 'ready',
-          title: design.artifact.title,
-          artifact: design.artifact,
-          renderUrl: `/api/designs/${invitationId}/render`,
-        });
+        if (stopProgress) {
+          stopProgress();
+          if (progressStopRef.current === stopProgress) progressStopRef.current = null;
+        }
+        setPreview(invitationId ? previewBeforeSendRef.current : { status: 'empty' });
+        restoreComposer(claimedImageIds);
         setMessages((current) => [
           ...current,
           {
             role: 'ai',
-            text: invitationIsPublished
-              ? `Updated — “${design.artifact.title}” is ready. Publish the update when you want it to replace the public design.`
-              : `Updated — “${design.artifact.title}” reflects your changes.`,
+            text: safeMessage,
           },
         ]);
-      } catch (caught) {
-        setPreview(previousPreview);
-        if (controller.signal.aborted) {
-          setMessages((current) => [
-            ...current,
-            {
-              role: 'ai',
-              text: 'Design update cancelled. Your previous preview is still available.',
-            },
-          ]);
-        } else if (caught instanceof ApiError && caught.status === 401) {
-          router.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
-        } else {
-          setMessages((current) => [
-            ...current,
-            {
-              role: 'ai',
-              text:
-                caught instanceof ApiError
-                  ? caught.message
-                  : 'I could not update the design. Your previous version is still available.',
-            },
-          ]);
-        }
+        setFailed(null);
       } finally {
         if (requestControllerRef.current === controller) requestControllerRef.current = null;
-        sendInFlight.current = false;
-        setWorking(false);
+        // A superseded run must not clear the state of the run that replaced it.
+        if (ownsCanvas()) {
+          sendInFlight.current = false;
+          setWorking(false);
+        }
       }
     },
-    [invitationId, invitationIsPublished, preview, router, websiteProject, working]
+    [
+      applyResult,
+      communitySlug,
+      invitationId,
+      preview,
+      router,
+      selectedInvitationId,
+      spec,
+      websiteProject,
+      modelPreference,
+      attachedImages,
+      prompt,
+    ]
   );
 
   /**
@@ -483,6 +813,7 @@ export function AiStudioClient() {
           answers: session.answers,
           lastQuestionId: session.answers.at(-1)?.questionId,
           signal: controller.signal,
+          modelPreference: 'auto',
         });
         if (controller.signal.aborted) return;
         if (requestControllerRef.current === controller) requestControllerRef.current = null;
@@ -491,9 +822,12 @@ export function AiStudioClient() {
         if (analysis.status === 'READY') {
           setQuestion(null);
           setQuestionPhase('IDLE');
-          questionSessionRef.current = null;
           await runGeneration(
-            buildGenerationContext(originalPrompt, analysis.collectedData),
+            buildGenerationContext(
+              session.originalPrompt || originalPrompt,
+              analysis.collectedData,
+              session.answers
+            ),
             controller
           );
           return;
@@ -508,8 +842,12 @@ export function AiStudioClient() {
         setQuestionPhase('IDLE');
         setQuestion(null);
         questionSessionRef.current = null;
+        generationSubmissionRef.current = null;
         if (caught instanceof ApiError && caught.status === 401) {
-          router.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
+          const projectHref = selectedInvitationId
+            ? aiStudioProjectHref(selectedInvitationId)
+            : '/dashboard/invitations/new';
+          router.replace(`/login?next=${encodeURIComponent(projectHref)}`);
           return;
         }
         setMessages((current) => [
@@ -524,7 +862,7 @@ export function AiStudioClient() {
         ]);
       }
     },
-    [router, runGeneration]
+    [router, runGeneration, selectedInvitationId]
   );
 
   const send = useCallback(
@@ -533,6 +871,7 @@ export function AiStudioClient() {
       if (
         text.length < 3 ||
         working ||
+        projectLoading ||
         questionPhase === 'ANALYZING_PROMPT' ||
         sendInFlight.current
       ) {
@@ -551,6 +890,24 @@ export function AiStudioClient() {
       const controller = new AbortController();
       requestControllerRef.current = controller;
       setMessages((current) => [...current, { role: 'user', text }]);
+      generationSubmissionRef.current = captureAiStudioComposerSubmission(
+        text,
+        text,
+        attachedImages
+      );
+      const requestMode = resolveAiStudioRequestMode({
+        invitationId: selectedInvitationId ?? invitationId,
+        prompt: text,
+        questionFlowActive: question !== null || questionPhase !== 'IDLE',
+      });
+      if (requestMode === 'existing-refinement') {
+        questionSessionRef.current = null;
+        setQuestion(null);
+        setQuestionPhase('IDLE');
+        setQuestionDisabled(false);
+        await runGeneration(text, controller);
+        return;
+      }
       // A brand-new conversation: drop any previous question session.
       const startingNew = question === null && questionPhase === 'IDLE';
       const session = startingNew
@@ -563,7 +920,17 @@ export function AiStudioClient() {
       setQuestionPhase(startingNew ? 'ANALYZING_PROMPT' : questionPhase);
       await runAnalysis(text, session, controller);
     },
-    [question, questionPhase, runAnalysis, working]
+    [
+      invitationId,
+      projectLoading,
+      question,
+      questionPhase,
+      runAnalysis,
+      runGeneration,
+      selectedInvitationId,
+      working,
+      attachedImages,
+    ]
   );
 
   /** One answer at a time; the AI then decides the next step itself. */
@@ -573,7 +940,7 @@ export function AiStudioClient() {
       const current = question;
       if (!session || !current) return;
       if (value === null || value === '' || (Array.isArray(value) && value.length === 0)) return;
-      const answer: SmartAnswer = { questionId: current.id, value };
+      const answer: SmartAnswer = { questionId: current.id, question: current.text, value };
       const readable = Array.isArray(value) ? value.join(', ') : value;
       setMessages((current_) => [...current_, { role: 'user', text: readable }]);
       requestControllerRef.current?.abort();
@@ -597,22 +964,51 @@ export function AiStudioClient() {
     setQuestion(null);
     setQuestionPhase('IDLE');
     setQuestionDisabled(false);
+    generationSubmissionRef.current = null;
     setMessages((current) => [...current, { role: 'ai', text: 'Generation cancelled.' }]);
   }, []);
 
   const stop = useCallback(() => {
-    // Real cancellation: close the SSE progress connection first so no
-    // further stages render, then abort the active generation HTTP request.
-    // The send() catch above turns the abort into the neutral idle state.
+    // Stop is a user-visible action, so the UI must leave the generating state
+    // now rather than whenever the aborted request happens to settle. Advancing
+    // the run token first also revokes the in-flight run's permission to write
+    // to the canvas, which is what stops a late response from re-rendering it.
+    const stoppedRun = runTokenRef.current;
+    runTokenRef.current += 1;
+    cancelledRunRef.current = stoppedRun;
+
+    // Close the SSE progress connection so no further stage renders.
     progressStopRef.current?.();
     progressStopRef.current = null;
-    requestControllerRef.current?.abort();
+
+    const controller = requestControllerRef.current;
+    requestControllerRef.current = null;
+    if (controller) controller.abort();
+    else {
+      // Nothing was in flight (a repeated Stop): stay idempotent and silent.
+      cancelledRunRef.current = null;
+      return;
+    }
+
+    sendInFlight.current = false;
+    setWorking(false);
+    setGenerationProgress(null);
+    setPreview(previewBeforeSendRef.current);
+    // The submitted prompt and its images stay in the composer so the user can
+    // retry without retyping or re-uploading.
+    const submission = generationSubmissionRef.current;
+    if (submission) {
+      const restored = restoreAiStudioComposerSubmission(submission, []);
+      setPrompt(restored.prompt);
+      setAttachedImages(restored.images);
+    }
+    setMessages((current) => [...current, { role: 'ai', text: 'Generation cancelled.' }]);
   }, []);
 
   const persistHeroImage = useCallback(
     async (imageRef: string, freshPreviews: Record<string, string> = {}) => {
       if (!spec || !invitationId) return;
-      const previews = { ...mediaPreviews, ...freshPreviews };
+      const previews = { ...imagePreviews, ...freshPreviews };
       const next = withHeroImage(spec, imageRef);
       try {
         const saved = await saveInvitationEditor(invitationId, next);
@@ -620,7 +1016,7 @@ export function AiStudioClient() {
         setPreview({
           status: 'ready',
           title: saved.designSpecification.content.title,
-          specification: resolveMediaElements(saved.designSpecification, previews),
+          specification: resolveInvitationImageElements(saved.designSpecification, previews),
         });
         setMessages((current) => [...current, { role: 'ai', text: 'Photo added to your design.' }]);
         setImageNotice('Photo added to your design.');
@@ -634,34 +1030,31 @@ export function AiStudioClient() {
         );
       }
     },
-    [spec, invitationId, mediaPreviews, router]
+    [spec, invitationId, imagePreviews, router]
   );
 
-  /** The signed upload, shared by the in-design and the pending pre-generation paths. */
-  const uploadIntoLibrary = useCallback(
+  /** Store a photo used by an invitation design and return its stable design reference. */
+  const uploadInvitationImage = useCallback(
     async (targetInvitationId: string, file: File) => {
       setUploading(true);
       setUploadProgress(0);
       setImageNotice(null);
       try {
-        const target = await requestMediaUpload(targetInvitationId, {
+        const target = await requestImageUpload(targetInvitationId, {
           fileName: file.name,
           fileType: file.type,
           fileSize: file.size,
         });
-        await uploadToSignedTarget(target.uploadUrl, file, setUploadProgress);
-        await completeMediaUpload(targetInvitationId, target.mediaId, {
+        await uploadImageToSignedTarget(target.uploadUrl, file, setUploadProgress);
+        const savedImage = await completeImageUpload(targetInvitationId, target.imageId, {
           fileName: file.name,
           fileType: file.type,
           fileSize: file.size,
         });
-        const library = await listMedia(targetInvitationId);
-        const previews: Record<string, string> = {};
-        for (const item of library.items) {
-          if (item.previewUrl) previews[item.id] = item.previewUrl;
-        }
-        setMediaPreviews((current) => ({ ...current, ...previews }));
-        return `media://${target.mediaId}`;
+        const preview = savedImage.previewUrl;
+        const freshPreviews = preview ? { [target.imageId]: preview } : {};
+        setImagePreviews((current) => ({ ...current, ...freshPreviews }));
+        return `image://${target.imageId}`;
       } catch (caught) {
         if (caught instanceof ApiError && caught.status === 401) {
           router.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
@@ -680,56 +1073,84 @@ export function AiStudioClient() {
   const handleFile = useCallback(
     async (file: File) => {
       if (!invitationId || uploading) return;
-      const invalid = validateMediaFile(file);
+      const invalid = validateImageFile(file);
       if (invalid) {
         setImageNotice(invalid);
         return;
       }
-      const mediaRef = await uploadIntoLibrary(invitationId, file);
-      // Only the legacy designSpecification path can take a hero image; an artifact
-      // has no spec to rewrite, so the file simply stays in the media library.
-      if (mediaRef) await persistHeroImage(mediaRef);
+      const imageRef = await uploadInvitationImage(invitationId, file);
+      if (imageRef) await persistHeroImage(imageRef);
     },
-    [invitationId, uploading, uploadIntoLibrary, persistHeroImage]
+    [invitationId, uploading, uploadInvitationImage, persistHeroImage]
   );
 
-  /**
-   * Attaching from the new chat happens before any invitation exists, and media is
-   * owned by an invitation (POST /invitations/:id/media/uploads). So the file is
-   * validated immediately and held, then uploaded for real as soon as the first
-   * generation creates the invitation.
-   */
-  const handleAttachFile = useCallback(
-    (file: File) => {
+  const handleComposerFiles = useCallback(
+    async (files: File[]) => {
       if (uploading) return;
-      const invalid = validateMediaFile(file);
-      if (invalid) {
-        setImageNotice(invalid);
+      const available = Math.max(0, 5 - attachedImages.length);
+      const selected = files.slice(0, available);
+      if (!selected.length) {
+        setImageNotice('You can attach up to 5 images.');
         return;
       }
+      for (const file of selected) {
+        const invalid = validateImageFile(file);
+        if (invalid) {
+          setImageNotice(invalid);
+          return;
+        }
+      }
+      setUploading(true);
+      setUploadProgress(0);
       setImageNotice(null);
-      setPendingFile(file);
+      try {
+        const scope = invitationId ? 'invitation' : 'pending';
+        for (const file of selected) {
+          const metadata = { fileName: file.name, fileType: file.type, fileSize: file.size };
+          const target = invitationId
+            ? await requestImageUpload(invitationId, metadata)
+            : await requestPendingImageUpload(metadata);
+          await uploadImageToSignedTarget(target.uploadUrl, file, setUploadProgress);
+          const saved = invitationId
+            ? await completeImageUpload(invitationId, target.imageId, metadata)
+            : await completePendingImageUpload(target.imageId, metadata);
+          setAttachedImages((current) => [...current, { ...saved, scope }]);
+        }
+        setImageNotice(
+          'Image ready. It will only be used when your prompt explicitly asks to use it.'
+        );
+      } catch (caught) {
+        if (caught instanceof ApiError && caught.status === 401) {
+          router.replace('/login?next=%2Fdashboard%2Finvitations%2Fnew');
+          return;
+        }
+        setImageNotice(caught instanceof ApiError ? caught.message : 'Upload failed. Try again.');
+      } finally {
+        setUploading(false);
+        setUploadProgress(null);
+      }
     },
-    [uploading]
+    [attachedImages.length, invitationId, router, uploading]
   );
 
-  // The first generation mints the invitation that owns media, so drain the held
-  // file into the real signed upload as soon as one exists.
-  useEffect(() => {
-    if (!pendingFile || !invitationId || uploading) return;
-    let active = true;
-    void (async () => {
-      const mediaRef = await uploadIntoLibrary(invitationId, pendingFile);
-      if (!active) return;
-      if (mediaRef) {
-        setPendingFile(null);
-        setImageNotice('Photo attached to this invitation.');
+  const removeComposerImage = useCallback(
+    async (imageId: string) => {
+      const image = attachedImages.find((candidate) => candidate.id === imageId);
+      if (!image) return;
+      try {
+        if (image.scope === 'invitation' && invitationId) {
+          await removeInvitationImage(invitationId, imageId);
+        } else {
+          await removePendingImage(imageId);
+        }
+        setAttachedImages((current) => current.filter((candidate) => candidate.id !== imageId));
+        setImageNotice('Image removed.');
+      } catch (caught) {
+        setImageNotice(caught instanceof ApiError ? caught.message : 'Could not remove image.');
       }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [pendingFile, invitationId, uploading, uploadIntoLibrary]);
+    },
+    [attachedImages, invitationId]
+  );
 
   const handleUrlAdd = useCallback(() => {
     const url = imageUrl.trim();
@@ -755,14 +1176,20 @@ export function AiStudioClient() {
   useEffect(() => {
     if (autoSent.current) return;
     autoSent.current = true;
-    const saved = readPendingInvitationPrompt();
+    if (selectedInvitationId) return;
+    // Owner-gated and consumed immediately: another account's prompt can
+    // never auto-fire here, and this prompt cannot fire twice.
+    const saved = readPendingInvitationPrompt(user.id);
     if (saved?.trim()) {
+      clearPendingInvitationPrompt();
       setPrompt(saved.trim());
       void send(saved.trim());
     }
-  }, [send]);
+  }, [selectedInvitationId, send, user.id]);
 
-  const editorHref = invitationId ? `/dashboard/invitations/${invitationId}/editor` : null;
+  const studioHref = invitationId
+    ? `/dashboard/invitations/new?invitationId=${encodeURIComponent(invitationId)}`
+    : null;
   const detailsHref = invitationId ? `/dashboard/invitations/${invitationId}` : null;
 
   useEffect(() => {
@@ -800,26 +1227,29 @@ export function AiStudioClient() {
       generationProgress={generationProgress}
       prompt={prompt}
       hint={hint}
-      sendDisabled={working || questionPhase === 'ANALYZING_PROMPT' || prompt.trim().length < 3}
-      sendLabel="Generate"
+      sendDisabled={
+        projectLoading ||
+        working ||
+        questionPhase === 'ANALYZING_PROMPT' ||
+        prompt.trim().length < 3
+      }
+      sendLabel={selectedInvitationId ? 'Update' : 'Generate'}
       suggestions={messages.length === 0 ? suggestions : []}
       onReloadSuggestions={reloadSuggestions}
       canReloadSuggestions={canReloadSuggestions}
-      editorHref={editorHref}
+      studioHref={studioHref}
       detailsHref={preview.status === 'ready' ? detailsHref : null}
       publishUrl={publishUrl}
       publishing={publishing}
       publicationPending={publicationPending}
       onPublish={() => void publishInvitation()}
-      canEditDesign={Boolean(invitationId && websiteProject && preview.status === 'ready')}
-      onRegenerateDesign={(instruction) => void regenerateDesign(instruction)}
       failedMessage={failed?.message ?? null}
       questionPhase={questionPhase}
       question={question}
       questionDisabled={questionDisabled}
       onQuestionAnswer={(value) => void answerQuestion(value)}
       onQuestionCancel={cancelQuestion}
-      manualHref="/dashboard/events/new"
+      invitationsHref="/dashboard/invitations"
       profile={profile}
       imageBar={
         spec && invitationId ? (
@@ -836,19 +1266,26 @@ export function AiStudioClient() {
           />
         ) : null
       }
-      onAttachFile={handleAttachFile}
-      canAttach={!uploading && !pendingFile}
-      pendingUpload={
-        pendingFile
-          ? { name: pendingFile.name, size: pendingFile.size, type: pendingFile.type }
-          : null
-      }
-      attachNotice={imageNotice}
       recentInvitations={recentInvitations}
       recentProjectsLoading={recentProjectsLoading}
+      projectLoading={projectLoading}
       micSupported={micSupported}
       listening={listening}
       onToggleVoice={toggleVoiceInput}
+      modelOptions={modelOptions}
+      modelPreference={modelPreference}
+      modelSelectionLoading={modelSelectionLoading}
+      modelSelectionOperation="generation"
+      onModelPreferenceChange={changeModelPreference}
+      imageUpload={{
+        images: attachedImages,
+        uploading,
+        progress: uploadProgress,
+        notice: imageNotice,
+        disabled: working || projectLoading || questionPhase === 'ANALYZING_PROMPT',
+        onFiles: (files) => void handleComposerFiles(files),
+        onRemove: (imageId) => void removeComposerImage(imageId),
+      }}
       loggingOut={loggingOut}
       onLogout={onLogout}
       onPromptChange={setPrompt}

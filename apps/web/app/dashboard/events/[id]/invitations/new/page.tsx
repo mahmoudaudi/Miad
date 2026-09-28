@@ -1,8 +1,5 @@
-import type { Metadata } from 'next';
-import { CreateInvitationClient } from '@/components/invitations/CreateInvitationClient';
-
-export const metadata: Metadata = { title: 'Create Invitation — Miad' };
+import { redirect } from 'next/navigation';
 
 export default function NewInvitationPage({ params }: { params: { id: string } }) {
-  return <CreateInvitationClient eventId={params.id} />;
+  redirect('/dashboard/invitations/new');
 }

@@ -63,7 +63,7 @@ describe('InvitationEditorView', () => {
     );
     const missing = render({ state: { status: 'missing-design' }, draft: null });
     expect(missing).toContain('Choose a design first');
-    expect(missing).toContain('/dashboard/invitations/invitation-1/design');
+    expect(missing).toContain('/dashboard/invitations/new?invitationId=invitation-1');
   });
 
   it('loads saved text, style controls, and the matching live preview', () => {

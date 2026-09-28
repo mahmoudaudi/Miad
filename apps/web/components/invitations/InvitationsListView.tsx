@@ -23,10 +23,10 @@ export function InvitationsListView({ eventId, state, successMessage, onRetry, o
   return (
     <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
       <Link
-        href={`/dashboard/events/${eventId}`}
+        href="/dashboard/invitations"
         className={`rounded-lg text-label-md text-muted hover:text-ink ${focusRing}`}
       >
-        ← Back to Invitation
+        ← Back to Invitations
       </Link>
       <div className="mt-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -35,15 +35,15 @@ export function InvitationsListView({ eventId, state, successMessage, onRetry, o
             Invitation
           </h1>
           <p className="mt-3 max-w-xl text-body-lg text-muted">
-            Manage the design, publishing, and guest experience for this invitation.
+            Manage publishing and the guest experience here. Use AI Studio to create or refine the invitation design.
           </p>
         </div>
         {state.status === 'ready' && state.invitations.length === 0 && (
           <Link
-            href={`/dashboard/events/${eventId}/invitations/new`}
+            href="/dashboard/invitations/new"
             className={`w-full rounded-xl bg-primary px-5 py-3 text-center text-label-md text-white sm:w-auto ${focusRing}`}
           >
-            Create Invitation
+            Create with AI
           </Link>
         )}
       </div>
@@ -86,13 +86,13 @@ export function InvitationsListView({ eventId, state, successMessage, onRetry, o
           </span>
           <h2 className="mt-5 font-display text-headline-md text-ink">No invitation yet</h2>
           <p className="mt-3 max-w-md text-body-md text-muted">
-            Start designing this invitation when you are ready.
+            Describe what you want in AI Studio to create this event’s invitation.
           </p>
           <Link
-            href={`/dashboard/events/${eventId}/invitations/new`}
+            href="/dashboard/invitations/new"
             className={`mt-7 rounded-xl bg-primary px-5 py-3 text-label-md text-white ${focusRing}`}
           >
-            Create Invitation
+            Create with AI
           </Link>
         </section>
       )}
@@ -116,10 +116,10 @@ export function InvitationsListView({ eventId, state, successMessage, onRetry, o
                 View
               </Link>
               <Link
-                href={`/dashboard/invitations/${invitation.id}/edit`}
+                href={`/dashboard/invitations/new?invitationId=${encodeURIComponent(invitation.id)}`}
                 className={`rounded-lg border border-line px-3 py-2 text-center text-label-md text-ink sm:px-4 ${focusRing}`}
               >
-                Edit
+                Edit with AI
               </Link>
               <button
                 type="button"

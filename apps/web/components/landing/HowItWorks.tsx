@@ -15,7 +15,7 @@ function StepGraphic({ index, label }: { index: number; label: string }) {
         <div className="absolute left-2 top-2 z-10 rounded-lg border border-neutral-800 bg-white px-3.5 py-1.5 text-xs font-medium text-neutral-800 shadow-sm">
           {label}
         </div>
-        <div className="absolute right-0 top-[42%] z-10 flex translate-x-1 items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-white shadow-sm">
+        <div className="absolute right-0 top-[42%] z-10 flex translate-x-1 items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-primary-foreground shadow-sm">
           <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
             edit
           </span>
@@ -44,9 +44,9 @@ function StepGraphic({ index, label }: { index: number; label: string }) {
           {['Copy', 'Design', 'Layout', 'Confirm Attendance'].map((item) => (
             <div
               key={item}
-              className="w-full rounded-xl border border-neutral-800/80 bg-[#E5DFD7] px-3 py-2 text-center shadow-sm"
+              className="w-full rounded-xl border border-line bg-[rgb(var(--tint-sand))] px-3 py-2 text-center shadow-sm"
             >
-              <span className="text-[12px] font-medium text-neutral-900">{item}</span>
+              <span className="text-[12px] font-medium text-ink">{item}</span>
             </div>
           ))}
         </div>
@@ -79,7 +79,7 @@ function StepGraphic({ index, label }: { index: number; label: string }) {
           strokeWidth="1.3"
         />
       </svg>
-      <div className="relative z-10 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-white shadow-md">
+      <div className="relative z-10 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-md">
         <span className="material-symbols-outlined text-[30px]" aria-hidden="true">
           ios_share
         </span>
@@ -107,21 +107,21 @@ function StepGraphic({ index, label }: { index: number; label: string }) {
 export function HowItWorks({ locale }: { locale: Locale }) {
   const t = getDictionary(locale).howItWorks;
   const cardStyles = [
-    'border border-black/10 bg-white text-neutral-900 shadow-[0_4px_24px_rgba(0,0,0,0.03)]',
-    'bg-[#DDD6CE] text-neutral-900',
-    'bg-[#F5B495] text-neutral-950',
+    'border border-line bg-white text-[#171717] shadow-[0_4px_24px_rgba(0,0,0,0.03)]',
+    'bg-[rgb(var(--tint-chip))] text-ink',
+    'bg-[#F5B495] text-[#241C18]',
   ] as const;
 
   return (
-    <section id="how-it-works" className="scroll-mt-16 bg-[#F8F6F2] py-10 md:py-14">
+    <section id="how-it-works" className="scroll-mt-16 bg-[rgb(var(--section-alt))] py-10 md:py-14">
       <div className={CONTAINER}>
         <Reveal className="mx-auto mb-8 max-w-2xl text-center md:mb-10">
           <span
-            className={`mb-3 block text-[13px] font-semibold uppercase text-neutral-800 ${trackingFor(locale, 'tracking-wide')}`}
+            className={`mb-3 block text-[13px] font-semibold uppercase text-muted ${trackingFor(locale, 'tracking-wide')}`}
           >
             {t.eyebrow}
           </span>
-          <h2 className="font-display text-[2.15rem] font-bold leading-[1.12] tracking-[-0.03em] text-neutral-950 md:text-[3rem]">
+          <h2 className="font-display text-[2.15rem] font-bold leading-[1.12] tracking-[-0.03em] text-ink md:text-[3rem]">
             {t.title}
           </h2>
         </Reveal>
@@ -132,16 +132,16 @@ export function HowItWorks({ locale }: { locale: Locale }) {
               className={`flex min-h-[440px] flex-col justify-between rounded-[28px] p-6 transition-transform duration-300 hover:-translate-y-1 md:min-h-[500px] xl:min-h-[520px] xl:p-8 ${cardStyles[index] ?? cardStyles[0]}`}
             >
               <header>
-                <span className="mb-3 block text-[13px] font-semibold tracking-wide text-neutral-900/80">
+                <span className="mb-3 block text-[13px] font-semibold tracking-wide opacity-80">
                   {step.number}
                 </span>
-                <h3 className="text-[2.15rem] font-bold leading-[1.12] tracking-[-0.03em] text-neutral-950">
+                <h3 className="text-[2.15rem] font-bold leading-[1.12] tracking-[-0.03em]">
                   {step.title}
                 </h3>
               </header>
               <StepGraphic index={index} label={step.title} />
               <footer>
-                <p className="text-[13.5px] font-normal leading-relaxed text-neutral-800">
+                <p className="text-[13.5px] font-normal leading-relaxed opacity-75">
                   {step.text}
                 </p>
               </footer>

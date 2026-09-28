@@ -6,6 +6,7 @@ import { useOverlay } from '@/components/ui/useOverlay';
 import { LoginForm, RegisterForm } from '@/components/auth/AuthForms';
 import type { AuthUser } from '@/lib/auth';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { BRAND_BLUR_DATA_URL } from './LandingSkeleton';
 import type { Locale } from '@/lib/i18n/locales';
 
 export type AuthMode = 'login' | 'register';
@@ -66,6 +67,8 @@ export function AuthModal({
           <Image
             alt={dict.nav.logo}
             className="h-16 w-auto max-w-[160px] object-contain"
+            placeholder="blur"
+            blurDataURL={BRAND_BLUR_DATA_URL}
             src="/miad-logo.png"
             width={180}
             height={120}

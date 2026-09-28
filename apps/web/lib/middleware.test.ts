@@ -7,6 +7,11 @@ function tokenWithExpiry(exp: number): string {
   return `header.${payload}.signature`;
 }
 
+function tokenWithRole(exp: number, role: string): string {
+  const payload = Buffer.from(JSON.stringify({ exp, role })).toString('base64url');
+  return `header.${payload}.signature`;
+}
+
 describe('authentication middleware', () => {
   it('recognizes current and expired access-token timestamps', () => {
     const now = Date.UTC(2026, 8, 20);
@@ -19,7 +24,7 @@ describe('authentication middleware', () => {
     const response = middleware(new NextRequest('http://localhost:3000/dashboard?tab=events'));
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe(
-      'http://localhost:3000/login?next=%2Fdashboard%3Ftab%3Devents'
+      'http://localhost:3000/?auth=login&next=%2Fdashboard%3Ftab%3Devents'
     );
   });
 
@@ -64,25 +69,68 @@ describe('authentication middleware', () => {
     expect(middleware(new NextRequest('http://localhost:3000/')).status).toBe(200);
   });
 
-  it('allows login when the access cookie is expired', () => {
+  it('redirects an admin-claimed session away from every dashboard route', () => {
+    const token = tokenWithRole(Math.floor(Date.now() / 1000) + 60, 'admin');
+    for (const path of ['/dashboard', '/dashboard/invitations', '/dashboard/invitations/new']) {
+      const response = middleware(
+        new NextRequest(`http://localhost:3000${path}`, {
+          headers: { cookie: `access_token=${token}` },
+        })
+      );
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe('http://localhost:3000/admin');
+    }
+  });
+
+  it('redirects an admin-claimed session on / and /login to /admin', () => {
+    const token = tokenWithRole(Math.floor(Date.now() / 1000) + 60, 'admin');
+    for (const path of ['/', '/login']) {
+      const response = middleware(
+        new NextRequest(`http://localhost:3000${path}`, {
+          headers: { cookie: `access_token=${token}` },
+        })
+      );
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe('http://localhost:3000/admin');
+    }
+  });
+
+  it('redirects a non-admin session away from admin routes to the admin login', () => {
+    const token = tokenWithRole(Math.floor(Date.now() / 1000) + 60, 'user');
+    const response = middleware(
+      new NextRequest('http://localhost:3000/admin/users', {
+        headers: { cookie: `access_token=${token}` },
+      })
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('http://localhost:3000/admin/login');
+  });
+
+  it('opens the in-app login modal when the access cookie is expired', () => {
     const token = tokenWithExpiry(Math.floor(Date.now() / 1000) - 1);
     const request = new NextRequest('http://localhost:3000/login', {
       headers: { cookie: `access_token=${token}` },
     });
-    expect(middleware(request).status).toBe(200);
+    expect(middleware(request).headers.get('location')).toBe('http://localhost:3000/?auth=login');
   });
 
-  it('redirects authenticated login and registration routes to AI Studio', () => {
+  it('opens the in-app auth modal for signed-out login and registration requests', () => {
     const token = tokenWithExpiry(Math.floor(Date.now() / 1000) + 60);
     for (const path of ['/login', '/register']) {
       const request = new NextRequest(`http://localhost:3000${path}`, {
-        headers: { cookie: `access_token=${token}` },
       });
       const response = middleware(request);
       expect(response.status).toBe(307);
       expect(response.headers.get('location')).toBe(
-        'http://localhost:3000/dashboard/invitations/new'
+        `http://localhost:3000/?auth=${path === '/register' ? 'register' : 'login'}`
       );
     }
+
+    const request = new NextRequest('http://localhost:3000/login', {
+      headers: { cookie: `access_token=${token}` },
+    });
+    expect(middleware(request).headers.get('location')).toBe(
+      'http://localhost:3000/dashboard/invitations/new'
+    );
   });
 });

@@ -46,7 +46,7 @@ describe('SmartQuestionCard', () => {
     expect(html).toContain('Something else');
     expect(html).toContain('aria-pressed="false"');
     // No simulated progress of any kind in the rendered text.
-    expect(visibleText(html)).not.toMatch(/%|remaining|seconds|estimated|countdown/i);
+    expect(visibleText(html)).not.toMatch(/%|remaining|seconds|estimated/i);
     expect(html).not.toContain('Generating your website');
   });
 

@@ -1,8 +1,5 @@
-import type { Metadata } from 'next';
-import { InvitationDesignClient } from '@/components/invitations/InvitationDesignClient';
-
-export const metadata: Metadata = { title: 'Invitation Design — Miad' };
+import { redirect } from 'next/navigation';
 
 export default function InvitationDesignPage({ params }: { params: { id: string } }) {
-  return <InvitationDesignClient invitationId={params.id} />;
+  redirect(`/dashboard/invitations/new?invitationId=${encodeURIComponent(params.id)}`);
 }

@@ -23,6 +23,9 @@ const en = {
     product: 'Product',
     howItWorks: 'How It Works',
     templates: 'Templates',
+    features: 'Features',
+    community: 'Community',
+    enterprise: 'Enterprise',
     pricing: 'Pricing',
     dashboard: 'Dashboard',
     events: 'Invitations',
@@ -189,7 +192,6 @@ const en = {
     },
   },
   features: {
-    eyebrow: 'Everything included',
     title: 'More than a pretty page',
     subtitle: 'Invitations, guests, photos, and responses — managed in one place.',
     items: [
@@ -206,8 +208,8 @@ const en = {
         text: 'Build your guest list, track who is coming, and follow up where needed.',
       },
       {
-        title: 'Photo library',
-        text: 'Upload and organize invitation imagery with instant previews.',
+        title: 'Invitation photos',
+        text: 'Add a photo to your invitation and preview it instantly.',
       },
       {
         title: 'Shareable links',

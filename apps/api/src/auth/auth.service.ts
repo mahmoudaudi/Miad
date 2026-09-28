@@ -9,6 +9,7 @@ import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
+import { FreeCreditsService } from '../billing/free-credits.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
@@ -35,7 +36,8 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
-    private readonly config: ConfigService
+    private readonly config: ConfigService,
+    private readonly freeCredits: FreeCreditsService
   ) {}
 
   private toSafeUser(u: {
@@ -108,6 +110,10 @@ export class AuthService {
       }
       throw error;
     }
+    // Free plan welcome credits so a new account can try AI generation.
+    // Best effort: never blocks registration, and the ledger key makes it
+    // safe to retry.
+    await this.freeCredits.grantFreeCreditsSafely(user.id, role.name);
     return {
       user: this.toSafeUser(user),
       tokens: this.signPair(user.id, user.email, role.name, user.tokenVersion),
@@ -274,6 +280,8 @@ export class AuthService {
     } else if (!existingAccount) {
       await this.prisma.oAuthAccount.create({ data: { userId: user.id, provider: 'google', providerAccountId: profile.sub } });
     }
+    // Same welcome grant for accounts created through Google sign-in.
+    await this.freeCredits.grantFreeCreditsSafely(user.id, user.role.name);
     return { user: this.toSafeUser(user), tokens: this.signPair(user.id, user.email, user.role.name, user.tokenVersion) };
   }
 

@@ -1,12 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import {
-  AiStudioView,
-  EditDesignDialog,
-  isValidEditInstruction,
-  type StudioPreview,
-} from './AiStudioView';
+import { AiStudioView, ModelPicker, type StudioPreview } from './AiStudioView';
 
 const noop = () => undefined;
 const base = {
@@ -15,10 +10,10 @@ const base = {
   sendDisabled: true,
   sendLabel: 'Generate',
   suggestions: ['Tech Founder Dinner', '30th Rooftop Birthday'],
-  editorHref: null,
+  studioHref: null,
   detailsHref: null,
   failedMessage: null,
-  manualHref: '/dashboard/events/new',
+  invitationsHref: '/dashboard/invitations',
   imageBar: null,
   profile: {
     name: 'Maya Haddad',
@@ -60,26 +55,71 @@ const artifactPreview: StudioPreview = {
 };
 
 describe('AiStudioView', () => {
-  it('offers Edit design for a ready generated preview and renders an instruction dialog', () => {
+  it('shows uploaded previews with remove controls beside the plus upload button', () => {
+    const html = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[]}
+        preview={{ status: 'empty' }}
+        imageUpload={{
+          images: [
+            {
+              id: '11111111-1111-4111-8111-111111111111',
+              fileName: 'couple.jpg',
+              previewUrl: 'https://signed.example/couple.jpg',
+            },
+          ],
+          uploading: false,
+          progress: null,
+          notice: 'Image ready.',
+          disabled: false,
+          onFiles: noop,
+          onRemove: noop,
+        }}
+      />
+    );
+    expect(html).toContain('aria-label="Add images"');
+    expect(html).toContain('multiple=""');
+    expect(html).toContain('aria-label="Selected images"');
+    expect(html).toContain('src="https://signed.example/couple.jpg"');
+    expect(html).toContain('aria-label="Remove couple.jpg"');
+  });
+
+  it('renders an empty composer with no attachment previews while generation is running', () => {
+    const html = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        prompt=""
+        messages={[{ role: 'user', text: 'Use this photo for Ahmad and Sara.' }]}
+        preview={{ status: 'working' }}
+        imageUpload={{
+          images: [],
+          uploading: false,
+          progress: null,
+          notice: null,
+          disabled: true,
+          onFiles: noop,
+          onRemove: noop,
+        }}
+      />
+    );
+    expect(html).toContain('aria-label="Stop generation"');
+    expect(html).toContain('<textarea');
+    expect(html).not.toContain('aria-label="Selected images"');
+    expect(html).not.toContain('Remove couple.jpg');
+  });
+  it('keeps design refinement in the AI conversation instead of opening a separate editor', () => {
     const preview = renderToStaticMarkup(
       <AiStudioView
         {...base}
         messages={[{ role: 'user', text: 'A garden dinner' }]}
         preview={artifactPreview}
         detailsHref="/dashboard/invitations/inv-1"
-        canEditDesign
       />
     );
-    const dialog = renderToStaticMarkup(<EditDesignDialog onCancel={noop} onRegenerate={noop} />);
-    expect(preview).toContain('Edit design');
-    expect(dialog).toContain('aria-modal="true"');
-    expect(dialog).toContain('animate-modal-pop');
-    expect(dialog).toContain('What would you like to change?');
-    expect(dialog).toContain('Regenerate design');
-    expect(isValidEditInstruction('  ')).toBe(false);
-    expect(isValidEditInstruction('ab')).toBe(false);
-    expect(isValidEditInstruction('Make it lighter.')).toBe(true);
-    expect(isValidEditInstruction('x'.repeat(1001))).toBe(false);
+    expect(preview).toContain('aria-label="AI conversation"');
+    expect(preview).not.toContain('Edit design');
+    expect(preview).not.toContain('Open editor');
   });
 
   it('uses the existing preview progress state for design refinement', () => {
@@ -92,6 +132,20 @@ describe('AiStudioView', () => {
     );
     expect(html).toContain('Updating your invitation…');
     expect(html).not.toContain('Creating your invitation…');
+  });
+
+  it('keeps the saved preview visible while a refinement is running', () => {
+    const html = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'Make the background lighter.' }]}
+        preview={{ status: 'working', operation: 'refine', previous: artifactPreview }}
+        detailsHref="/dashboard/invitations/inv-1"
+      />
+    );
+    expect(html).toContain('aria-label="Updating existing preview"');
+    expect(html).toContain('src="/api/designs/inv-1/render"');
+    expect(html).toContain('Garden Dinner');
   });
 
   it('introduces the chat and live preview with staged entrance transitions', () => {
@@ -113,14 +167,10 @@ describe('AiStudioView', () => {
         preview={{ status: 'empty' }}
         {...base}
         recentInvitations={[
-          {
-            id: 'inv-1',
-            title: 'Garden Dinner',
-            eventDate: '2026-12-12',
-            status: 'PUBLISHED',
-            updatedAt: new Date().toISOString(),
-            hasDesign: true,
-          },
+          { id: 'inv-1', title: 'Garden Dinner' },
+          { id: 'inv-2', title: 'Rooftop Birthday' },
+          { id: 'inv-3', title: 'Studio Opening' },
+          { id: 'inv-4', title: 'Old Project' },
         ]}
       />
     );
@@ -130,14 +180,13 @@ describe('AiStudioView', () => {
     expect(html).toContain('Maya, what are we working on today?');
     expect(html).toContain('Tech Founder Dinner');
     expect(html).toContain('aria-label="Account: Maya Haddad"');
-    expect(html).toContain('src="/api/designs/inv-1/render"');
-    expect(html).toContain('title="Garden Dinner invitation preview"');
-    expect(html).toContain('sandbox=""');
-    expect(html).toContain('aspect-[4/3]');
-    expect(html).toContain('Published');
-    expect(html).toContain('December 12, 2026');
-    expect(html).toContain('Open/Edit');
-    expect(html).toContain('href="/dashboard/invitations/inv-1/editor"');
+    expect(html).toContain('Rooftop Birthday');
+    expect(html).toContain('Studio Opening');
+    expect(html).not.toContain('Old Project');
+    expect(html).not.toContain('invitation preview');
+    expect(html).not.toContain('Published');
+    expect(html).not.toContain('Open/Edit');
+    expect(html).toContain('href="/dashboard/invitations/new?invitationId=inv-1"');
     // The split studio is reserved for an active conversation.
     expect(html).not.toContain('aria-label="AI conversation"');
     expect(html).not.toContain('aria-label="Live invitation preview"');
@@ -156,7 +205,9 @@ describe('AiStudioView', () => {
       <AiStudioView {...base} messages={[]} preview={{ status: 'empty' }} />
     );
     expect(empty).toContain('No projects yet');
-    expect(empty).toContain('Your invitations will appear here once you create your first one.');
+    expect(empty).not.toContain(
+      'Your invitations will appear here once you create your first one.'
+    );
   });
 
   it('promotes to the split studio once the client sends a prompt', () => {
@@ -174,12 +225,70 @@ describe('AiStudioView', () => {
     expect(html).not.toContain('miad-studio-glow');
   });
 
+  it('shows a compact Auto pill in the composer toolbar instead of a form field', () => {
+    const html = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[]}
+        preview={{ status: 'empty' }}
+        modelSelectionOperation="generation"
+        modelOptions={[]}
+      />
+    );
+    expect(html).toContain('Choose AI model');
+    expect(html).toContain('>Auto</span>');
+    expect(html).not.toContain('studio-model');
+    expect(html).not.toContain('<select');
+  });
+
+  it('shows Auto and only the verified Stitch generation models returned by the API', () => {
+    const html = renderToStaticMarkup(
+      <ModelPicker
+        modelSelectionOperation="generation"
+        modelPreference="auto"
+        modelSelectionLoading={false}
+        onModelPreferenceChange={() => undefined}
+        initialOpen
+        modelOptions={[
+          {
+            id: 'GEMINI_3_8_FLASH',
+            name: 'Stitch — Gemini 3.8 Flash',
+            description: 'Generate with Gemini 3.8 Flash in Stitch',
+            operations: ['generation'],
+            tier: 'standard',
+            available: true,
+          },
+          {
+            id: 'GEMINI_3_5_FLASH_LITE',
+            name: 'Stitch — Gemini 3.5 Flash-Lite',
+            description: 'Generate with Gemini 3.5 Flash-Lite in Stitch',
+            operations: ['generation'],
+            tier: 'standard',
+            available: true,
+          },
+          {
+            id: 'UNVERIFIED_MODEL',
+            name: 'Unverified model',
+            description: 'Not a generation option',
+            operations: ['refinement'],
+            tier: 'standard',
+            available: true,
+          },
+        ]}
+      />
+    );
+    expect(html).toContain('>Auto</span>');
+    expect(html).toContain('Stitch — Gemini 3.8 Flash');
+    expect(html).toContain('Stitch — Gemini 3.5 Flash-Lite');
+    expect(html).not.toContain('Unverified model');
+  });
+
   it('prompts to create a first invitation when the account has none', () => {
     const html = renderToStaticMarkup(
       <AiStudioView messages={[]} preview={{ status: 'empty' }} {...base} />
     );
     expect(html).toContain('Recent projects');
-    expect(html).toContain('once you create your first one');
+    expect(html).toContain('No projects yet.');
   });
 
   it('renders the compact workspace, real navigation, and empty canvas', () => {
@@ -198,7 +307,7 @@ describe('AiStudioView', () => {
     expect(html).toContain('Your invitation preview will appear here');
     expect(html).toContain('Maya Haddad');
     expect(html).toContain('href="/dashboard/invitations/new"');
-    expect(html).toContain('href="/dashboard/events/new"');
+    expect(html).toContain('href="/dashboard/invitations"');
     expect(html).not.toContain('href="#"');
     expect(html).not.toContain('Font Awesome');
     expect(html).not.toContain('<script');
@@ -213,15 +322,14 @@ describe('AiStudioView', () => {
           { role: 'ai', text: 'Done.' },
         ]}
         preview={{ status: 'ready', title: 'Garden Dinner', specification }}
-        editorHref="/dashboard/invitations/inv-1/editor"
+        studioHref="/dashboard/invitations/new?invitationId=inv-1"
         detailsHref="/dashboard/invitations/inv-1"
       />
     );
     expect(html).toContain('A garden birthday');
     expect(html).toContain('Done.');
     expect(html).toContain('Garden Dinner');
-    expect(html).toContain('href="/dashboard/invitations/inv-1/editor"');
-    expect(html).toContain('Open editor');
+    expect(html).not.toContain('href="/dashboard/invitations/inv-1/editor"');
     expect(html).toContain('href="/dashboard/invitations/inv-1"');
     expect(html).toContain('View details');
     expect(html).toContain('>Publish</button>');
@@ -310,14 +418,14 @@ describe('AiStudioView', () => {
         messages={[{ role: 'user', text: 'Hi' }]}
         preview={{ status: 'failed' }}
         failedMessage="AI generation is not configured."
-        editorHref="/dashboard/invitations/inv-1/editor"
+        studioHref="/dashboard/invitations/new?invitationId=inv-1"
       />
     );
     expect(failed).toContain('Your invitation was created');
     expect(failed).not.toContain('Retry AI generation');
     expect(failed).toContain('Submit a new prompt in the agent panel');
     expect(failed).toContain('No preview yet');
-    expect(failed).toContain('href="/dashboard/events/new"');
+    expect(failed).toContain('href="/dashboard/invitations"');
   });
 
   it('swaps the submit button for a real stop button while generating', () => {
@@ -371,8 +479,64 @@ describe('AiStudioView', () => {
       />
     );
     expect(html).toContain('Website generation progress');
-    expect(html).toContain('Generating your website');
-    expect(html).toContain('Checking the generated website');
+    expect(html).toContain('Generating your design with Stitch');
+    expect(html).toContain('Checking and sanitizing your design');
+  });
+
+  it('shows the real refinement steps and exposes a backend failure state', () => {
+    const progress = {
+      generationId: '11111111-1111-4111-8111-111111111111',
+      operation: 'refinement' as const,
+      stage: 'REFINEMENT_APPLYING' as const,
+      status: 'ACTIVE' as const,
+      occurredAt: '2026-09-26T12:00:00.000Z',
+    };
+    const active = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'Make it more elegant.' }]}
+        preview={{ status: 'working', operation: 'refine', previous: artifactPreview }}
+        generationProgress={progress}
+      />
+    );
+    expect(active).toContain('Invitation refinement progress');
+    expect(active).toContain('Understanding your request');
+    expect(active).toContain('Inspecting the current invitation');
+    expect(active).toContain('Applying the requested changes');
+    expect(active).toContain('Validating the updated design');
+    expect(active).toContain('Saving the new invitation version');
+    expect(active).toContain('aria-label="Updating existing preview"');
+
+    const failed = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'Make it more elegant.' }]}
+        preview={artifactPreview}
+        generationProgress={{
+          ...progress,
+          stage: 'REFINEMENT_APPLYING',
+          status: 'FAILED',
+          errorMessage: 'The website could not be generated. Please try again.',
+        }}
+      />
+    );
+    expect(failed).toContain('role="alert"');
+    expect(failed).toContain('The website could not be generated. Please try again.');
+
+    const updated = renderToStaticMarkup(
+      <AiStudioView
+        {...base}
+        messages={[{ role: 'user', text: 'Make it more elegant.' }]}
+        preview={artifactPreview}
+        generationProgress={{
+          ...progress,
+          stage: 'REFINEMENT_PREVIEW_UPDATED',
+          status: 'COMPLETED',
+        }}
+      />
+    );
+    expect(updated).toContain('Updating the preview');
+    expect(updated.match(/✓/g)).toHaveLength(6);
   });
 
   it('shows one smart question and hides generation progress while asking', () => {

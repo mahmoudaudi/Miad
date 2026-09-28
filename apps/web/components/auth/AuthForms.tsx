@@ -2,7 +2,9 @@
 
 import React, { useId, useState } from 'react';
 import { LookAwayLogin } from './LookAwayLogin';
-import { AuthApiError, AuthUser, login, register, startGoogleSignIn } from '@/lib/auth';
+import { AuthUser, login, register, startGoogleSignIn } from '@/lib/auth';
+import { AUTH_SUCCESS_MESSAGES, safeAuthErrorMessage, withAuthFeedback } from '@/lib/auth-feedback';
+import { useToast } from '@/components/ui/ToastProvider';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import type { Locale } from '@/lib/i18n/locales';
 import { isValidEmail, validateRegister } from '@/lib/validators';
@@ -57,7 +59,7 @@ function GoogleAuthButton({ label }: { label: string }) {
   );
 }
 
-/** Shared login form — used by the modal and the /login page. */
+/** Login form used by the in-app auth modal. */
 export function LoginForm({
   locale,
   onSuccess,
@@ -68,6 +70,7 @@ export function LoginForm({
   onSwitch: () => void;
 }) {
   const t = getDictionary(locale).auth;
+  const showToast = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -79,14 +82,27 @@ export function LoginForm({
     e.preventDefault();
     if (busy) return;
     setError(null);
-    if (!isValidEmail(email)) return setError(t.validation.validEmail);
-    if (!password) return setError(t.validation.passwordRequired);
+    if (!isValidEmail(email)) {
+      setError(t.validation.validEmail);
+      showToast(t.validation.validEmail, 'error');
+      return;
+    }
+    if (!password) {
+      setError(t.validation.passwordRequired);
+      showToast(t.validation.passwordRequired, 'error');
+      return;
+    }
     setBusy(true);
     try {
-      const user = await login({ email: email.trim(), password });
+      const user = await withAuthFeedback(
+        () => login({ email: email.trim(), password }),
+        AUTH_SUCCESS_MESSAGES.login,
+        t.validation.loginFailed,
+        showToast
+      );
       onSuccess(user);
     } catch (err) {
-      setError(err instanceof AuthApiError ? err.message : t.validation.loginFailed);
+      setError(safeAuthErrorMessage(err, t.validation.loginFailed));
     } finally {
       setBusy(false);
     }
@@ -95,9 +111,7 @@ export function LoginForm({
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-3" noValidate aria-busy={busy}>
       <LookAwayLogin passwordFocused={passwordFocused} />
-      <GoogleAuthButton
-        label={t.continueWithGoogle}
-      />
+      <GoogleAuthButton label={t.continueWithGoogle} />
       <AuthDivider label={t.orContinueWithEmail} />
       <label htmlFor={`${formId}-email`} className="text-label-md text-ink">
         {t.emailLabel}
@@ -154,7 +168,7 @@ export function LoginForm({
   );
 }
 
-/** Shared registration form — used by the modal and the /register page. */
+/** Registration form used by the in-app auth modal. */
 export function RegisterForm({
   locale,
   onSuccess,
@@ -165,6 +179,7 @@ export function RegisterForm({
   onSwitch: () => void;
 }) {
   const t = getDictionary(locale).auth;
+  const showToast = useToast();
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '' });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -182,18 +197,28 @@ export function RegisterForm({
     setError(null);
     const problems = validateRegister(form, locale);
     const first = problems.firstName ?? problems.lastName ?? problems.email ?? problems.password;
-    if (first) return setError(first);
+    if (first) {
+      setError(first);
+      showToast(first, 'error');
+      return;
+    }
     setBusy(true);
     try {
-      const user = await register({
-        firstName: form.firstName.trim(),
-        lastName: form.lastName.trim(),
-        email: form.email.trim(),
-        password: form.password,
-      });
+      const user = await withAuthFeedback(
+        () =>
+          register({
+            firstName: form.firstName.trim(),
+            lastName: form.lastName.trim(),
+            email: form.email.trim(),
+            password: form.password,
+          }),
+        AUTH_SUCCESS_MESSAGES.signup,
+        t.validation.registerFailed,
+        showToast
+      );
       onSuccess(user);
     } catch (err) {
-      setError(err instanceof AuthApiError ? err.message : t.validation.registerFailed);
+      setError(safeAuthErrorMessage(err, t.validation.registerFailed));
     } finally {
       setBusy(false);
     }
@@ -202,9 +227,7 @@ export function RegisterForm({
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-3" noValidate aria-busy={busy}>
       <LookAwayLogin passwordFocused={passwordFocused} />
-      <GoogleAuthButton
-        label={t.signupWithGoogle}
-      />
+      <GoogleAuthButton label={t.signupWithGoogle} />
       <AuthDivider label={t.orContinueWithEmail} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="text-label-md text-ink">

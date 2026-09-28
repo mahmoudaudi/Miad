@@ -157,20 +157,6 @@ async function mock(context, authenticated = true) {
       }
       return fulfill({ design });
     }
-    if (path.endsWith('/media'))
-      return fulfill({
-        items: [
-          {
-            id: 'qa-media',
-            fileName: 'Garden inspiration.jpg',
-            fileSize: 458300,
-            fileType: 'image/jpeg',
-            createdAt: stamp,
-            previewUrl: base + '/landing/template-dinner.jpg',
-          },
-        ],
-        nextCursor: null,
-      });
     if (path === '/notifications/read-all') return fulfill({ updated: 1 });
     if (path === '/notifications') return fulfill({ items: [notification], nextCursor: null });
     if (path.includes('/notifications/') && path.endsWith('/read'))
@@ -230,7 +216,6 @@ async function run() {
     '/dashboard/events/qa-event/guests',
     '/dashboard/events/qa-event/guests/new',
     '/dashboard/events/qa-event/guests/qa-guest',
-    '/dashboard/invitations/qa-invitation/media',
     '/dashboard/notifications',
   ];
   const overflows = [];

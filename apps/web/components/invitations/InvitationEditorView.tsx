@@ -146,10 +146,10 @@ export function InvitationEditorView({
         message="This invitation is unavailable or may have been removed."
         action={
           <Link
-            href="/dashboard/events"
+            href="/dashboard/invitations"
             className={`inline-flex rounded-xl bg-primary px-5 py-3 text-label-md text-white ${focusRing}`}
           >
-            Back to Events
+            Back to Invitations
           </Link>
         }
       />
@@ -162,10 +162,10 @@ export function InvitationEditorView({
         message="Select and save a design before opening the editor."
         action={
           <Link
-            href={`/dashboard/invitations/${invitationId}/design`}
+            href={`/dashboard/invitations/new?invitationId=${encodeURIComponent(invitationId)}`}
             className={`inline-flex rounded-xl bg-primary px-5 py-3 text-label-md text-white ${focusRing}`}
           >
-            Choose a design
+            Continue in AI Studio
           </Link>
         }
       />
@@ -234,10 +234,10 @@ export function InvitationEditorView({
       <header className="flex flex-col gap-5 border-b border-line pb-6 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <Link
-            href={`/dashboard/invitations/${invitationId}/design`}
+            href={`/dashboard/invitations/new?invitationId=${encodeURIComponent(invitationId)}`}
             className={`rounded-lg text-label-md text-muted hover:text-ink ${focusRing}`}
           >
-            ← Back to Design
+            ← Back to AI Studio
           </Link>
           <p className="mt-6 text-label-sm uppercase tracking-[0.16em] text-accent">
             Invitation editor

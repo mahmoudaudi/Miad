@@ -63,6 +63,7 @@ describe('Guests and RSVP e2e', () => {
     });
     const userIds = users.map((user) => user.id);
     if (userIds.length) {
+      await prisma.notification.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.rsvp.deleteMany({
         where: { guest: { invitation: { event: { userId: { in: userIds } } } } },
       });
@@ -74,7 +75,9 @@ describe('Guests and RSVP e2e', () => {
       });
       await prisma.invitation.deleteMany({ where: { event: { userId: { in: userIds } } } });
       await prisma.event.deleteMany({ where: { userId: { in: userIds } } });
-      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+      // Registration grants credits in an immutable ledger. Keep the uniquely
+      // named test users and their financial history rather than bypassing the
+      // production append-only trigger during suite cleanup.
     }
     await prisma.$disconnect();
     await app?.close();
@@ -103,7 +106,7 @@ describe('Guests and RSVP e2e', () => {
     expect(created.body).toMatchObject({
       name: 'Nadia',
       email: 'nadia.rsvp@example.com',
-      rsvp: null,
+      rsvp: { status: 'PENDING', attendeesCount: 0, respondedAt: null },
     });
     const list = await withCookies(
       request(server).get(`/api/v1/events/${eventId}/guests`),
@@ -118,13 +121,24 @@ describe('Guests and RSVP e2e', () => {
       request(server).patch(`/api/v1/events/${eventId}/guests/${guestId}`),
       ownerCookies
     )
-      .send({ phone: '+961 70 000 000' })
+      .send({ phone: '+961 70 000 000', status: 'ATTENDING', partySize: 3, notes: 'Vegetarian' })
       .expect(200)
-      .expect((response) => expect(response.body.phone).toBe('+961 70 000 000'));
+      .expect((response) => {
+        expect(response.body.phone).toBe('+961 70 000 000');
+        expect(response.body.rsvp).toMatchObject({
+          status: 'ATTENDING',
+          attendeesCount: 3,
+          message: 'Vegetarian',
+        });
+      });
   });
 
   it('returns safe 404 responses for cross-user guest access', async () => {
     const server = app.getHttpServer();
+    await withCookies(
+      request(server).get(`/api/v1/invitations/${invitationId}/guests`),
+      otherCookies
+    ).expect(404);
     await withCookies(
       request(server).get(`/api/v1/events/${eventId}/guests/${guestId}`),
       otherCookies
@@ -145,7 +159,6 @@ describe('Guests and RSVP e2e', () => {
     const server = app.getHttpServer();
     const payload = {
       name: 'Nadia',
-      email: 'nadia.rsvp@example.com',
       status: 'ATTENDING',
       attendeesCount: 2,
       message: 'Looking forward to it.',
@@ -172,6 +185,13 @@ describe('Guests and RSVP e2e', () => {
       .send(payload)
       .expect(201)
       .expect({ status: 'received' });
+    await request(server)
+      .get(`/api/v1/public/invitations/${slug}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body).not.toHaveProperty('guests');
+        expect(JSON.stringify(response.body)).not.toContain('Nadia');
+      });
     const list = await withCookies(
       request(server).get(`/api/v1/events/${eventId}/guests`),
       ownerCookies
@@ -181,18 +201,37 @@ describe('Guests and RSVP e2e', () => {
       attendeesCount: 2,
       message: 'Looking forward to it.',
     });
-    await request(server).post(`/api/v1/public/invitations/${slug}/rsvp`).send(payload).expect(409);
+    await request(server)
+      .post(`/api/v1/public/invitations/${slug}/rsvp`)
+      .send({ ...payload, attendeesCount: 3, message: 'Updated party size.' })
+      .expect(201);
+    const updatedList = await withCookies(
+      request(server).get(`/api/v1/invitations/${invitationId}/guests`),
+      ownerCookies
+    ).expect(200);
+    expect(updatedList.body).toHaveLength(1);
+    expect(updatedList.body[0].rsvp).toMatchObject({
+      status: 'ATTENDING',
+      attendeesCount: 3,
+      message: 'Updated party size.',
+      respondedAt: expect.any(String),
+    });
+    await request(server).get(`/api/v1/invitations/${invitationId}/guests`).expect(401);
   });
 
   it('validates public RSVP semantics and deletes a guest with its RSVP', async () => {
     const server = app.getHttpServer();
     await request(server)
       .post(`/api/v1/public/invitations/${slug}/rsvp`)
-      .send({ name: 'No Contact', status: 'ATTENDING', attendeesCount: 1 })
+      .send({ name: 'Pending Guest', status: 'PENDING' })
       .expect(400);
     await request(server)
       .post(`/api/v1/public/invitations/${slug}/rsvp`)
-      .send({ name: 'Declining', phone: '555-0100', status: 'NOT_ATTENDING', attendeesCount: 1 })
+      .send({ name: 'Extra Field', status: 'NOT_ATTENDING', email: 'extra@example.com' })
+      .expect(400);
+    await request(server)
+      .post(`/api/v1/public/invitations/${slug}/rsvp`)
+      .send({ name: 'Declining', status: 'NOT_ATTENDING', attendeesCount: 1 })
       .expect(400);
     await withCookies(
       request(server).delete(`/api/v1/events/${eventId}/guests/${guestId}`),

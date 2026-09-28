@@ -115,10 +115,13 @@ export class AuthController {
       return res.redirect(`${frontend}/login?oauth=error`);
     }
     try {
-      const { tokens } = await this.auth.loginWithGoogle(code);
+      const { user, tokens } = await this.auth.loginWithGoogle(code);
       this.setCookies(res, tokens);
       res.clearCookie('oauth_state', { httpOnly: true, secure: isProd(), sameSite: 'lax', path: '/api/v1/auth' });
-      return res.redirect(`${frontend}/dashboard/invitations/new`);
+      // Role-to-home rule mirrors the web helper: admins land on the admin
+      // portal even when arriving through Google OAuth.
+      const destination = user.role === 'admin' ? '/admin' : '/dashboard/invitations/new';
+      return res.redirect(`${frontend}${destination}`);
     } catch {
       return res.redirect(`${frontend}/login?oauth=error`);
     }

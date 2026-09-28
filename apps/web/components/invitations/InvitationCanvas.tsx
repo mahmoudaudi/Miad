@@ -9,12 +9,15 @@ export function InvitationCanvas({
   specification,
   titleAs = 'h3',
   className = '',
+  publicPresentation = false,
   selectedElementId,
   onSelectElement,
 }: {
   specification: InvitationDesignSpecification;
   titleAs?: 'h1' | 'h3';
   className?: string;
+  /** Render the saved invitation as the public page itself, without the editor preview frame. */
+  publicPresentation?: boolean;
   selectedElementId?: string | null;
   onSelectElement?: (id: string) => void;
 }) {
@@ -25,7 +28,7 @@ export function InvitationCanvas({
     sections.find((section) => section.type === 'hero' && section.visible)?.variant
   );
   const displayUrl = (url: string | undefined): string | null =>
-    url && !url.startsWith('media://') ? url : null;
+    url && !/^(?:image|media):\/\//.test(url) ? url : null;
   const heroImageUrl =
     elements
       .map((element) =>
@@ -62,12 +65,14 @@ export function InvitationCanvas({
   );
   return (
     <article
-      className={`relative flex min-h-[380px] flex-col justify-center overflow-hidden rounded-xl border px-5 sm:min-h-[480px] sm:px-10 ${
-        layout.density === 'airy' ? 'py-12 sm:py-24' : 'py-9 sm:py-14'
-      } ${className}`}
+      className={`relative flex flex-col justify-center ${
+        publicPresentation
+          ? 'min-h-[100svh] w-full overflow-visible px-5 sm:px-10'
+          : 'min-h-[380px] overflow-hidden rounded-xl border px-5 sm:min-h-[480px]'
+      } ${layout.density === 'airy' ? 'py-12 sm:py-24' : 'py-9 sm:py-14'} ${className}`}
       style={{
         backgroundColor: colors.surface,
-        borderColor: colors.accent,
+        ...(publicPresentation ? {} : { borderColor: colors.accent }),
         color: colors.text,
         textAlign: layout.alignment,
         fontFamily: typography.bodyFamily,

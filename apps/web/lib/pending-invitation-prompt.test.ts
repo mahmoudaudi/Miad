@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  adoptPendingInvitationPrompt,
   clearPendingInvitationPrompt,
   PENDING_INVITATION_PROMPT_KEY,
   readPendingInvitationPrompt,
@@ -48,5 +49,27 @@ describe('pending invitation prompt', () => {
     sessionStorage.setItem(PENDING_INVITATION_PROMPT_KEY, '{not-json');
     expect(readPendingInvitationPrompt()).toBeNull();
     expect(sessionStorage.getItem(PENDING_INVITATION_PROMPT_KEY)).toBeNull();
+  });
+
+  it('discards a prompt stamped for another account', () => {
+    const sessionStorage = memoryStorage();
+    vi.stubGlobal('window', { sessionStorage });
+
+    savePendingInvitationPrompt('Account A prompt', 'account-a');
+    expect(readPendingInvitationPrompt('account-b')).toBeNull();
+    // The foreign prompt is removed so it cannot apply later either.
+    expect(sessionStorage.getItem(PENDING_INVITATION_PROMPT_KEY)).toBeNull();
+  });
+
+  it('returns an ownerless prompt to anyone until it is adopted', () => {
+    const sessionStorage = memoryStorage();
+    vi.stubGlobal('window', { sessionStorage });
+
+    savePendingInvitationPrompt('Anonymous prompt');
+    expect(readPendingInvitationPrompt('account-b')).toBe('Anonymous prompt');
+
+    adoptPendingInvitationPrompt('account-b');
+    expect(readPendingInvitationPrompt('account-b')).toBe('Anonymous prompt');
+    expect(readPendingInvitationPrompt('account-c')).toBeNull();
   });
 });

@@ -1,8 +1,10 @@
 import { AiGenerationCancelledError, InvitationAiProviderError } from './ai-provider.types';
+import { Logger } from '@nestjs/common';
 import { OpenRouterInvitationAiProvider } from './openai-invitation-ai.provider';
+import { HtmlArtifactValidationError } from './html-artifact';
 
 const config = (values: Record<string, unknown>) =>
-  ({ get: (key: string) => values[key] }) as never;
+  ({ get: (key: string) => ({ AI_STRICT_DESIGN_VALIDATION: true, ...values })[key] }) as never;
 const event = {
   title: 'Garden Dinner',
   eventType: 'Dinner',
@@ -71,6 +73,8 @@ describe('OpenRouterInvitationAiProvider', () => {
     expect(JSON.stringify(body)).not.toContain('router-secret');
     expect(body.response_format).toEqual({ type: 'json_object' });
     expect(body.messages[0].content).toContain('standalone');
+    expect(body.messages[0].content).toContain('Never generate RSVP sections, forms, buttons, controls');
+    expect(body.messages[0].content).toContain('Never generate countdown timers or countdown displays');
     expect(JSON.parse(body.messages[1].content)).toEqual({
       prompt: 'Create a calm garden dinner invitation',
       event,
@@ -89,6 +93,77 @@ describe('OpenRouterInvitationAiProvider', () => {
       project: projectOutput.project,
       artifact: { title: 'Garden Dinner' },
     });
+  });
+
+  it('keeps SaaS RSVP and countdown functionality out of structured design schema and instructions', async () => {
+    let systemPrompt = '';
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+      systemPrompt = body.messages[0]?.content ?? '';
+      return response({ schemaVersion: 1 });
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(config({ OPENROUTER_API_KEY: 'router-secret' }));
+
+    await provider.generateDesign({
+      operation: 'generate',
+      prompt: 'Create an invitation',
+      event,
+      currentDesign: null,
+    });
+
+    expect(systemPrompt).toContain('"enum":["hero","details","story","schedule","note"]');
+    expect(systemPrompt).not.toContain('"rsvp"');
+    expect(systemPrompt).toContain('Never generate RSVP sections, forms, buttons');
+    expect(systemPrompt).toContain('never generate countdown timers or displays');
+  });
+
+  it('accepts alternate renderable output shapes in temporary compatibility mode', async () => {
+    global.fetch = jest.fn(async () =>
+      response({
+        design: {
+          title: 'Garden Dinner',
+          summary: 'An evening among the flowers',
+          body: '<main><h1>Garden Dinner</h1><p>December 12</p></main>',
+          styles: '',
+        },
+      })
+    ) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({ OPENROUTER_API_KEY: 'router-secret', AI_STRICT_DESIGN_VALIDATION: false })
+    );
+
+    await expect(
+      provider.generateHtml({ prompt: 'Create a garden invitation', event })
+    ).resolves.toMatchObject({
+      artifact: {
+        title: 'Garden Dinner',
+        body: '<main><h1>Garden Dinner</h1><p>December 12</p></main>',
+      },
+      project: {
+        files: [
+          { path: 'index.html', content: expect.stringContaining('Garden Dinner') },
+          { path: 'styles.css', content: 'body{margin:0;font-family:serif}' },
+        ],
+      },
+    });
+  });
+
+  it('still rejects empty, malformed, and dangerous output in compatibility mode', async () => {
+    const provider = new OpenRouterInvitationAiProvider(
+      config({ OPENROUTER_API_KEY: 'router-secret', AI_STRICT_DESIGN_VALIDATION: false })
+    );
+    for (const output of [{ project: {} }, { project: { html: '   ' } }]) {
+      global.fetch = jest.fn(async () => response(output)) as never;
+      await expect(
+        provider.generateHtml({ prompt: 'Create a garden invitation', event })
+      ).rejects.toMatchObject({ status: 'invalid-output' });
+    }
+    global.fetch = jest.fn(async () =>
+      response({ project: { html: '<main><script>alert(1)</script></main>' } })
+    ) as never;
+    await expect(
+      provider.generateHtml({ prompt: 'Create a garden invitation', event })
+    ).rejects.toMatchObject({ status: 'invalid-output' });
   });
 
   it('accepts a project that carries extra model keys and drops them', async () => {
@@ -296,7 +371,14 @@ describe('OpenRouterInvitationAiProvider', () => {
     ).rejects.toMatchObject({
       status: 'invalid-output',
     } satisfies Partial<InvitationAiProviderError>);
-    expect(stages).toEqual(['PARSING_RESPONSE', 'VALIDATING_WEBSITE']);
+    expect(stages).toEqual([
+      'PARSING_RESPONSE',
+      'VALIDATING_WEBSITE',
+      'PARSING_RESPONSE',
+      'VALIDATING_WEBSITE',
+      'PARSING_RESPONSE',
+      'VALIDATING_WEBSITE',
+    ]);
   });
 
   it('keeps malformed model JSON at the parsing stage', async () => {
@@ -323,7 +405,7 @@ describe('OpenRouterInvitationAiProvider', () => {
     ).rejects.toMatchObject({
       status: 'invalid-output',
     } satisfies Partial<InvitationAiProviderError>);
-    expect(stages).toEqual(['PARSING_RESPONSE']);
+    expect(stages).toEqual(['PARSING_RESPONSE', 'PARSING_RESPONSE', 'PARSING_RESPONSE']);
   });
 
   it('extracts event details from structured output', async () => {
@@ -372,7 +454,9 @@ describe('OpenRouterInvitationAiProvider', () => {
     );
     await expect(
       provider.generateHtml({ prompt: 'Create a garden invitation', event })
-    ).rejects.toMatchObject({ status: 'provider' } satisfies Partial<InvitationAiProviderError>);
+    ).rejects.toMatchObject({
+      status: 'invalid-output',
+    } satisfies Partial<InvitationAiProviderError>);
   });
 
   it('recovers JSON wrapped in a preamble and trailing text', async () => {
@@ -420,37 +504,46 @@ describe('OpenRouterInvitationAiProvider', () => {
     } satisfies Partial<InvitationAiProviderError>);
   });
 
-  it('keeps website generation active past any fixed deadline until the provider responds', async () => {
+  it('bounds every website generation provider attempt by the configured timeout', async () => {
     jest.useFakeTimers();
-    let capturedSignal: AbortSignal | null | undefined;
-    let resolveFetch!: (value: Response) => void;
+    const capturedSignals: Array<AbortSignal | null | undefined> = [];
     global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
-      capturedSignal = init.signal;
-      return new Promise<Response>((resolve) => {
-        resolveFetch = resolve;
+      capturedSignals.push(init.signal);
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
       });
     }) as never;
-    // Even a 1ms configured budget must not cancel website generation: the
-    // generation timeout no longer exists.
     const provider = new OpenRouterInvitationAiProvider(
-      config({ OPENROUTER_API_KEY: 'router-secret', OPENROUTER_GENERATION_TIMEOUT_MS: 1 })
+      config({
+        OPENROUTER_API_KEY: 'router-secret',
+        OPENROUTER_MODEL_GENERATION: 'model-primary',
+        OPENROUTER_MODEL_GENERATION_FALLBACKS: 'model-primary',
+        OPENROUTER_REQUEST_TIMEOUT_MS: 1000,
+      })
     );
     const pending = provider.generateHtml({ prompt: 'Create a garden invitation', event });
-    await jest.advanceTimersByTimeAsync(300_000);
-    expect(capturedSignal?.aborted).toBe(false);
-    resolveFetch(response(projectOutput));
-    await expect(pending).resolves.toMatchObject({ project: projectOutput.project });
+    const rejection = expect(pending).rejects.toMatchObject({ status: 'timeout' });
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(capturedSignals).toHaveLength(1);
+    expect(capturedSignals[0]?.aborted).toBe(true);
+    await rejection;
   });
 
   it('treats caller cancellation as cancelled, never as a timeout or provider failure', async () => {
     global.fetch = jest.fn(
       (_url: string, init: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
-          init.signal?.addEventListener('abort', () => {
+          const onAbort = () => {
             const error = new Error('This operation was aborted');
             error.name = 'AbortError';
             reject(error);
-          });
+          };
+          if (init.signal?.aborted) onAbort();
+          else init.signal?.addEventListener('abort', onAbort, { once: true });
         })
     ) as never;
     const provider = new OpenRouterInvitationAiProvider(
@@ -486,4 +579,441 @@ describe('OpenRouterInvitationAiProvider', () => {
       status: 'timeout',
     });
   }, 10000);
+
+  it.each([
+    [
+      'timeout',
+      () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        return Promise.reject(error);
+      },
+    ],
+    ['server error', () => new Response('ignored', { status: 503 })],
+    ['rate limit', () => new Response('ignored', { status: 429 })],
+    ['connection failure', () => Promise.reject(new TypeError('socket closed'))],
+  ])('falls back after a recoverable %s', async (_scenario, makeFailure) => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      requestedModels.push(body.model);
+      if (body.model === 'primary') return makeFailure();
+      return response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_GENERATION: 'primary',
+        OPENROUTER_MODEL_GENERATION_FALLBACKS: 'fallback',
+      })
+    );
+
+    await expect(
+      provider.generateHtml({ prompt: 'Create a garden invitation', event })
+    ).resolves.toMatchObject({
+      model: 'fallback',
+      project: projectOutput.project,
+    });
+    expect(requestedModels).toEqual(['primary', 'fallback']);
+  });
+
+  it('falls back when a provider returns malformed design output', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      requestedModels.push(body.model);
+      return body.model === 'primary'
+        ? response({ project: { name: 'Broken', description: 'Broken', files: [] } })
+        : response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_GENERATION: 'primary',
+        OPENROUTER_MODEL_GENERATION_FALLBACKS: 'fallback',
+      })
+    );
+
+    await expect(
+      provider.generateHtml({ prompt: 'Create a garden invitation', event })
+    ).resolves.toMatchObject({
+      model: 'fallback',
+    });
+    expect(requestedModels).toEqual(['primary', 'fallback']);
+  });
+
+  it('does not fall back for non-recoverable input errors or return provider bodies', async () => {
+    let attempts = 0;
+    global.fetch = jest.fn(async () => {
+      attempts += 1;
+      return new Response('sensitive provider details', { status: 400 });
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_GENERATION: 'primary',
+        OPENROUTER_MODEL_GENERATION_FALLBACKS: 'fallback',
+      })
+    );
+
+    await expect(
+      provider.generateHtml({ prompt: 'Create a garden invitation', event })
+    ).rejects.toMatchObject({
+      status: 'input',
+      message: 'AI provider request failed.',
+    });
+    expect(attempts).toBe(1);
+  });
+
+  it('classifies HTTP 402 as a payment issue without leaking details or retrying models', async () => {
+    const attempts: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      attempts.push((JSON.parse(String(init.body)) as { model: string }).model);
+      return new Response('sensitive payment response details', { status: 402 });
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_REFINEMENT: 'primary',
+        OPENROUTER_MODEL_REFINEMENT_FALLBACKS: 'fallback-one,fallback-two',
+      })
+    );
+
+    await expect(
+      provider.refineHtml({ prompt: 'Make it elegant.', event, project: projectOutput.project })
+    ).rejects.toMatchObject({ status: 'provider', httpStatus: 402, retryable: false });
+    expect(attempts).toEqual(['primary']);
+  });
+
+  it('logs safe per-attempt diagnostics with invitation identity and fallback state', async () => {
+    const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const model = (JSON.parse(String(init.body)) as { model: string }).model;
+      return model === 'primary'
+        ? new Response('ignored', { status: 503 })
+        : response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        NODE_ENV: 'development',
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_REFINEMENT: 'primary',
+        OPENROUTER_MODEL_REFINEMENT_FALLBACKS: 'fallback',
+      })
+    );
+
+    await provider.refineHtml({
+      invitationId: 'diagnostic-invitation-id',
+      prompt: 'Private invitation change request',
+      event,
+      project: projectOutput.project,
+    });
+
+    const attempts = debug.mock.calls
+      .map(([metadata]) => metadata)
+      .filter(
+        (metadata): metadata is Record<string, unknown> =>
+          Boolean(metadata) &&
+          typeof metadata === 'object' &&
+          (metadata as Record<string, unknown>).event === 'model-route-attempt'
+      );
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        invitationId: 'diagnostic-invitation-id',
+        operation: 'website-refinement',
+        attempt: 1,
+        model: 'primary',
+        stage: 'provider-request',
+        failureCategory: 'provider',
+        httpStatus: 503,
+        fallbackUsed: false,
+        fallbackTriggered: true,
+      }),
+      expect.objectContaining({
+        invitationId: 'diagnostic-invitation-id',
+        operation: 'website-refinement',
+        attempt: 2,
+        model: 'fallback',
+        fallbackUsed: true,
+        fallbackTriggered: false,
+        failureCategory: 'none',
+      }),
+    ]);
+    expect(JSON.stringify(attempts)).not.toContain('Private invitation change request');
+    expect(JSON.stringify(attempts)).not.toContain('server-secret');
+    debug.mockRestore();
+  });
+
+  it('returns a clean error after every configured model fails', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      requestedModels.push(body.model);
+      return new Response('provider raw body should not escape', { status: 503 });
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_GENERATION: 'primary',
+        OPENROUTER_MODEL_GENERATION_FALLBACKS: 'fallback-one,fallback-two',
+      })
+    );
+    let message = '';
+    try {
+      await provider.generateHtml({ prompt: 'Create a garden invitation', event });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(requestedModels).toEqual(['primary', 'fallback-one', 'fallback-two']);
+    expect(message).toBe('AI provider request failed.');
+    expect(message).not.toContain('provider raw body');
+  });
+
+  it('uses separately configured models for generation and refinement', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      requestedModels.push(body.model);
+      return response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_GENERATION: 'generation-model',
+        OPENROUTER_MODEL_GENERATION_FALLBACKS: 'generation-fallback',
+        OPENROUTER_MODEL_REFINEMENT: 'refinement-model',
+        OPENROUTER_MODEL_REFINEMENT_FALLBACKS: 'refinement-fallback',
+      })
+    );
+    await provider.generateHtml({ prompt: 'Create a garden invitation', event });
+    await provider.refineHtml({
+      prompt: 'Make it elegant',
+      event,
+      project: projectOutput.project,
+    });
+    expect(requestedModels).toEqual(['generation-model', 'refinement-model']);
+  });
+
+  it('runs the configured refinement fallback chain and retains refinement context', async () => {
+    const requestedModels: string[] = [];
+    let refinementRequest: { messages: Array<{ role: string; content: string }> } | undefined;
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as {
+        model: string;
+        messages: Array<{ role: string; content: string }>;
+      };
+      requestedModels.push(body.model);
+      refinementRequest = body;
+      if (body.model !== 'qwen/qwen3-coder-next')
+        return new Response('unavailable', { status: 503 });
+      return response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_REFINEMENT: 'google/gemini-3.8-flash',
+        OPENROUTER_MODEL_REFINEMENT_FALLBACKS: 'deepseek/deepseek-v4.1-flash,qwen/qwen3-coder-next',
+      })
+    );
+
+    await expect(
+      provider.refineHtml({
+        invitationId: 'invitation-diagnostic-id',
+        prompt: 'Change the colors to navy and gold.',
+        event,
+        project: projectOutput.project,
+      })
+    ).resolves.toMatchObject({ model: 'qwen/qwen3-coder-next' });
+    expect(requestedModels).toEqual([
+      'google/gemini-3.8-flash',
+      'deepseek/deepseek-v4.1-flash',
+      'qwen/qwen3-coder-next',
+    ]);
+    expect(refinementRequest?.messages[0]?.content).toContain(
+      'Modify the supplied currentProject to fulfill the refinement prompt'
+    );
+    expect(JSON.parse(refinementRequest!.messages[1]!.content)).toMatchObject({
+      prompt: 'Change the colors to navy and gold.',
+      event,
+      currentProject: projectOutput.project,
+    });
+    expect(refinementRequest!.messages[1]!.content).not.toContain('invitation-diagnostic-id');
+  });
+
+  it('runs an approved manual model first and then a compatible configured fallback', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/models/user')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              'anthropic/claude-opus-5.5',
+              'google/gemini-3.8-flash',
+              'deepseek/deepseek-v4.1-flash',
+              'qwen/qwen3-coder-next',
+            ].map((id) => ({ id })),
+          }),
+          { status: 200 }
+        );
+      }
+      requestedModels.push((JSON.parse(String(init?.body)) as { model: string }).model);
+      return requestedModels.length === 1
+        ? new Response('', { status: 503 })
+        : response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({ OPENROUTER_API_KEY: 'router-secret' })
+    );
+
+    await expect(
+      provider.generateHtml({
+        prompt: 'Create a garden invitation',
+        event,
+        modelPreference: 'anthropic/claude-opus-5.5',
+      })
+    ).resolves.toMatchObject({ model: 'deepseek/deepseek-v4.1-flash' });
+    expect(requestedModels).toEqual(['anthropic/claude-opus-5.5', 'deepseek/deepseek-v4.1-flash']);
+  });
+
+  it('does not attempt a fallback after a successful manual model response', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/models/user')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              'openai/gpt-6-luna',
+              'google/gemini-3.8-flash',
+              'deepseek/deepseek-v4.1-flash',
+              'qwen/qwen3-coder-next',
+            ].map((id) => ({ id })),
+          }),
+          { status: 200 }
+        );
+      }
+      requestedModels.push((JSON.parse(String(init?.body)) as { model: string }).model);
+      return response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({ OPENROUTER_API_KEY: 'router-secret' })
+    );
+
+    await provider.generateHtml({
+      prompt: 'Create a garden invitation',
+      event,
+      modelPreference: 'openai/gpt-6-luna',
+    });
+    expect(requestedModels).toEqual(['openai/gpt-6-luna']);
+  });
+
+  it('does not retry output rejected by the security validator', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      requestedModels.push((JSON.parse(String(init.body)) as { model: string }).model);
+      return response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({ OPENROUTER_API_KEY: 'router-secret' })
+    );
+
+    await expect(
+      provider.refineHtml({
+        prompt: 'Make the invitation more elegant',
+        event,
+        project: projectOutput.project,
+        validateArtifact: () => {
+          throw new HtmlArtifactValidationError(
+            'css',
+            'security',
+            'css-forbidden-value',
+            16,
+            'css'
+          );
+        },
+      })
+    ).rejects.toMatchObject({ status: 'invalid-output', retryable: false });
+    expect(requestedModels).toEqual(['google/gemini-3.8-flash']);
+  });
+
+  it('falls back from malformed refinement output without weakening validation', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      requestedModels.push(body.model);
+      return body.model === 'google/gemini-3.8-flash'
+        ? response({ project: { name: 'Broken', description: 'No files', files: [] } })
+        : response(projectOutput);
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_REFINEMENT: 'google/gemini-3.8-flash',
+        OPENROUTER_MODEL_REFINEMENT_FALLBACKS: 'deepseek/deepseek-v4.1-flash,qwen/qwen3-coder-next',
+      })
+    );
+
+    await expect(
+      provider.refineHtml({
+        prompt: 'Make it navy and gold.',
+        event,
+        project: projectOutput.project,
+      })
+    ).resolves.toMatchObject({ model: 'deepseek/deepseek-v4.1-flash' });
+    expect(requestedModels).toEqual(['google/gemini-3.8-flash', 'deepseek/deepseek-v4.1-flash']);
+  });
+
+  it('uses the configured Smart Questions model for a valid analysis operation', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      requestedModels.push(body.model);
+      return response({ status: 'READY', collectedData: { eventType: 'Dinner' }, question: null });
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_SMART_QUESTIONS: 'questions-model',
+        OPENROUTER_MODEL_SMART_QUESTIONS_FALLBACKS: 'questions-fallback',
+      })
+    );
+
+    await expect(
+      provider.analyzeDetails({ prompt: 'Dinner', collectedData: {}, answers: [] })
+    ).resolves.toMatchObject({ status: 'READY' });
+    expect(requestedModels).toEqual(['questions-model']);
+  });
+
+  it('retries structured design validation failures inside the model route', async () => {
+    const requestedModels: string[] = [];
+    global.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      requestedModels.push(body.model);
+      return response(body.model === 'primary' ? { incomplete: true } : { schemaVersion: 1 });
+    }) as never;
+    const provider = new OpenRouterInvitationAiProvider(
+      config({
+        OPENROUTER_API_KEY: 'server-secret',
+        OPENROUTER_MODEL_GENERATION: 'primary',
+        OPENROUTER_MODEL_GENERATION_FALLBACKS: 'fallback',
+      })
+    );
+
+    await expect(
+      provider.generateDesign({
+        operation: 'generate',
+        prompt: 'Make a garden invitation',
+        event,
+        currentDesign: null,
+        validateSpecification: (specification) => {
+          if (
+            typeof specification !== 'object' ||
+            specification === null ||
+            !('schemaVersion' in specification)
+          )
+            throw new Error('invalid structure');
+        },
+      })
+    ).resolves.toMatchObject({ model: 'fallback' });
+    expect(requestedModels).toEqual(['primary', 'fallback']);
+  });
 });

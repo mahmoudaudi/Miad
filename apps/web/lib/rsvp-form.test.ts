@@ -4,13 +4,17 @@ import { emptyRsvpForm, submitPublicRsvp, validateRsvpForm } from './rsvp-form';
 describe('RSVP form', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('requires contact details and enforces status-specific guest counts', () => {
-    expect(validateRsvpForm({ ...emptyRsvpForm, name: 'Nadia' }).errors.contact).toBeTruthy();
+  it('requires only a full name and enforces status-specific guest counts', () => {
+    expect(validateRsvpForm({ ...emptyRsvpForm }).errors.name).toBeTruthy();
+    expect(validateRsvpForm({ ...emptyRsvpForm, name: 'Nadia' }).input).toEqual({
+      name: 'Nadia',
+      status: 'ATTENDING',
+      message: null,
+    });
     expect(
       validateRsvpForm({
         ...emptyRsvpForm,
         name: 'Nadia',
-        email: 'n@example.com',
         status: 'NOT_ATTENDING',
         attendeesCount: '1',
       }).errors.attendeesCount
@@ -22,14 +26,13 @@ describe('RSVP form', () => {
       validateRsvpForm({
         ...emptyRsvpForm,
         name: ' Nadia ',
-        email: ' N@EXAMPLE.COM ',
+        attendeesCount: '2',
         message: ' Hello ',
       }).input
     ).toMatchObject({
       name: 'Nadia',
-      email: 'n@example.com',
       status: 'ATTENDING',
-      attendeesCount: 1,
+      attendeesCount: 2,
       message: 'Hello',
     });
   });
@@ -39,7 +42,7 @@ describe('RSVP form', () => {
       .fn()
       .mockResolvedValue({ ok: true, json: async () => ({ status: 'received' }) });
     vi.stubGlobal('fetch', fetchMock);
-    const input = validateRsvpForm({ ...emptyRsvpForm, name: 'Nadia', phone: '123' }).input!;
+    const input = validateRsvpForm({ ...emptyRsvpForm, name: 'Nadia' }).input!;
     await submitPublicRsvp('garden-party', input);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/public/invitations/garden-party/rsvp'),

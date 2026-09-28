@@ -13,10 +13,14 @@ nest-cli.json.bak
 
 # Environment & secrets — NEVER commit real secrets
 .env
-.env.local
-.env.*.local
-apps/*/.env
-apps/*/.env.local
+**/.env
+**/.env.*
+!.env.example
+**/*.env
+**/*.env.*
+!*.env.example
+**/.env.backup*
+**/*.env.backup*
 apps/ai-service/.venv/
 apps/ai-service/__pycache__/
 

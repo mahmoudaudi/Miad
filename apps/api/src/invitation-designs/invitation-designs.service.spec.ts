@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  InternalServerErrorException,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -124,7 +125,10 @@ describe('InvitationDesignsService', () => {
     expect(result).toHaveProperty('designSpecification');
     if (!('designSpecification' in result)) throw new Error('Expected a legacy design response.');
     expect(result.designSpecification).toMatchObject(specification);
-    expect(result.designSpecification.sections).toHaveLength(4);
+    expect(result.designSpecification.sections).toHaveLength(3);
+    expect(result.designSpecification.sections).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'rsvp' })])
+    );
     expect(result.designSpecification.elements).toHaveLength(4);
     expect(result).not.toHaveProperty('id');
     expect(result).not.toHaveProperty('userId');
@@ -273,12 +277,14 @@ describe('InvitationDesignsService', () => {
           calls.push(args);
           return { count: 1 };
         },
-        create: async (args: { data: { designSpecification: unknown } }) => {
+        create: async (args: {
+          data: { designSpecification: unknown; sourceType: unknown };
+        }) => {
           calls.push(args);
           return {
             ...designRecord,
             version: 2,
-            sourceType: 'AI_GENERATED',
+            sourceType: args.data.sourceType,
             designSpecification: args.data.designSpecification,
           };
         },
@@ -373,6 +379,67 @@ describe('InvitationDesignsService', () => {
     });
   });
 
+  it('normalizes alternative renderable design shapes when strict validation is disabled', () => {
+    const service = new InvitationDesignsService({} as never);
+    const normalize = (
+      service as unknown as {
+        normalizeGeneratedSpecification: (
+          value: unknown,
+          event: {
+            title: string;
+            eventType: string;
+            description: string | null;
+            eventDate: Date;
+            startTime: Date | null;
+            endTime: Date | null;
+            venueName: string | null;
+            venueAddress: string | null;
+          }
+        ) => unknown;
+      }
+    ).normalizeGeneratedSpecification;
+    expect(
+      normalize.call(
+        service,
+        { design: { title: 'Garden Dinner', sections: [{ heading: 'Welcome', text: 'Join us' }] } },
+        event
+      )
+    ).toMatchObject({
+      content: { title: 'Garden Dinner' },
+      sections: [{ title: 'Welcome', body: 'Join us' }],
+    });
+    expect(normalize.call(service, { headline: 'A garden evening' }, event)).toMatchObject({
+      content: { title: 'A garden evening' },
+    });
+  });
+
+  it('rejects empty and executable structured output in compatibility mode', () => {
+    const service = new InvitationDesignsService({} as never);
+    const normalize = (
+      service as unknown as {
+        normalizeGeneratedSpecification: (
+          value: unknown,
+          event: {
+            title: string;
+            eventType: string;
+            description: string | null;
+            eventDate: Date;
+            startTime: Date | null;
+            endTime: Date | null;
+            venueName: string | null;
+            venueAddress: string | null;
+          }
+        ) => unknown;
+      }
+    ).normalizeGeneratedSpecification;
+    expect(() => normalize.call(service, {}, event)).toThrow(
+      'AI provider returned invalid output.'
+    );
+    expect(() => normalize.call(service, { title: '<script>alert(1)</script>' }, event)).toThrow(
+      'AI provider returned invalid output.'
+    );
+  });
+
   it('generates, sanitizes, and versions standalone HTML without reading a current design', async () => {
     const calls: unknown[] = [];
     let providerInput: Record<string, unknown> | undefined;
@@ -396,7 +463,7 @@ describe('InvitationDesignsService', () => {
           return {
             ...designRecord,
             version: 2,
-            sourceType: 'AI_GENERATED',
+            sourceType: args.data.sourceType,
             designSpecification: args.data.designSpecification,
           };
         },
@@ -409,26 +476,23 @@ describe('InvitationDesignsService', () => {
       },
       $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
     };
-    const provider = {
+    const stitch = {
       generateHtml: async (input: Record<string, unknown>) => {
         providerInput = input;
         return {
-          provider: 'test',
-          model: 'test-model',
-          tokensUsed: 654,
-          artifact: {
-            title: 'Garden Dinner',
-            description: 'A calm evening among the garden',
-            body: '<main class="card"><h1>Garden Dinner</h1><script>alert(1)</script></main>',
-            css: 'body{background:url(https://tracker.example);color:#123}.card{display:grid}',
-          },
+          title: 'Garden Dinner',
+          description: 'A calm evening among the garden',
+          body: '<main class="card"><h1>Garden Dinner</h1><script>alert(1)</script></main>',
+          css: 'body{background:url(https://tracker.example);color:#123}.card{display:grid}',
         };
       },
     };
 
     const result = await new InvitationDesignsService(
       prisma as never,
-      provider as never
+      undefined,
+      undefined,
+      stitch as never
     ).generateHtmlWithAi('owner-1', invitationId, 'Create a calm garden dinner invitation');
 
     expect(providerInput).toEqual({
@@ -443,6 +507,8 @@ describe('InvitationDesignsService', () => {
         venueName: 'The Garden Room',
         venueAddress: null,
       },
+      onProgress: expect.any(Function),
+      signal: undefined,
     });
     expect(providerInput).not.toHaveProperty('currentDesign');
     expect(providerInput).not.toHaveProperty('specification');
@@ -450,7 +516,7 @@ describe('InvitationDesignsService', () => {
       data: {
         invitationId,
         version: 2,
-        sourceType: 'AI_GENERATED',
+        sourceType: 'STITCH_GENERATED',
         designSpecification: {
           format: 'html',
           version: 1,
@@ -460,14 +526,69 @@ describe('InvitationDesignsService', () => {
       },
     });
     expect(calls[2]).toMatchObject({
-      data: { operationType: 'GENERATE_DESIGN', status: 'SUCCEEDED', tokensUsed: 654 },
+      data: {
+        operationType: 'GENERATE_DESIGN',
+        status: 'SUCCEEDED',
+        tokensUsed: expect.any(Number),
+      },
     });
     expect(result).toMatchObject({
       version: 2,
-      sourceType: 'AI_GENERATED',
+      sourceType: 'STITCH_GENERATED',
       artifact: { format: 'html', version: 1 },
     });
     expect(result).not.toHaveProperty('designSpecification');
+  });
+
+  it('saves a renderable AI design when compatibility sanitization filters all CSS', async () => {
+    const persisted: unknown[] = [];
+    const prisma = {
+      invitation: {
+        findFirst: async () => ({ id: invitationId, event, designs: [{ version: 1 }] }),
+      },
+      invitationDesign: {
+        updateMany: async (args: unknown) => {
+          persisted.push(args);
+          return { count: 1 };
+        },
+        create: async (args: { data: { designSpecification: unknown } }) => {
+          persisted.push(args);
+          return {
+            ...designRecord,
+            version: 2,
+            sourceType: 'AI_GENERATED',
+            designSpecification: args.data.designSpecification,
+          };
+        },
+      },
+      aiUsage: { create: async () => ({ id: 'usage-compat' }) },
+      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    };
+    const stitch = {
+      generateHtml: async () => ({
+        title: 'Graduation Celebration',
+        description: 'A navy and gold celebration',
+        body: '<main><h1>Congratulations, Maya!</h1></main>',
+        css: '@import "https://example.test/theme.css";',
+      }),
+    };
+
+    const result = await new InvitationDesignsService(
+      prisma as never,
+      undefined,
+      undefined,
+      stitch as never
+    ).generateHtmlWithAi('owner-1', invitationId, 'Create a graduation invitation for Maya');
+
+    expect(result.version).toBe(2);
+    expect(result.artifact.body).toContain('Congratulations, Maya!');
+    expect(result.artifact.css).toBe('body{margin:0;font-family:serif}');
+    expect(persisted[1]).toMatchObject({
+      data: {
+        version: 2,
+        designSpecification: { body: '<main><h1>Congratulations, Maya!</h1></main>' },
+      },
+    });
   });
 
   it('refines a saved HTML design into the next validated version and preserves the previous row', async () => {
@@ -483,13 +604,16 @@ describe('InvitationDesignsService', () => {
       { version: 4, isActive: true, designSpecification: original },
     ];
     let providerInput: unknown;
+    const updateInvitation = jest.fn();
     const prisma = {
       invitation: {
         findFirst: async () => ({
           id: invitationId,
+          publishedDesignVersion: 1,
           event,
           designs: [{ ...designRecord, version: 4, designSpecification: original }],
         }),
+        update: updateInvitation,
       },
       invitationDesign: {
         updateMany: async () => {
@@ -548,6 +672,127 @@ describe('InvitationDesignsService', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ version: 4, isActive: false, designSpecification: original });
     expect(rows[1]).toMatchObject({ version: 5, isActive: true });
+    expect(updateInvitation).not.toHaveBeenCalled();
+  });
+
+  it('uses the owned Stitch screen for edits and persists its returned screen as a new version', async () => {
+    const original = {
+      format: 'html',
+      version: 1,
+      title: 'Ahmad & Sara',
+      description: 'Luxury romantic wedding',
+      body: '<main><h1>Ahmad &amp; Sara</h1><p>June 20, 2027</p></main>',
+      css: 'body{color:#765432}',
+      stitch: { projectId: 'project-1', screenId: 'design-1' },
+    };
+    const rows: Array<{ version: number; isActive: boolean; designSpecification: unknown }> = [
+      { version: 1, isActive: true, designSpecification: original },
+    ];
+    const prisma = {
+      invitation: {
+        findFirst: jest.fn(async () => ({
+          id: invitationId,
+          event: {
+            ...event,
+            description: [
+              'Original request: Create a wedding invitation for Ahmad and Sara.',
+              'Style: Luxury romantic',
+              'Colors: Ivory and gold',
+              'Date: June 20, 2027',
+            ].join('\n'),
+          },
+          designs: [
+            {
+              ...designRecord,
+              version: rows.at(-1)!.version,
+              isActive: rows.at(-1)!.isActive,
+              designSpecification: rows.at(-1)!.designSpecification,
+            },
+          ],
+        })),
+      },
+      invitationDesign: {
+        updateMany: jest.fn(async () => {
+          for (const row of rows) row.isActive = false;
+          return { count: 1 };
+        }),
+        create: jest.fn(async (args: { data: Record<string, unknown> }) => {
+          const row = {
+            version: args.data.version as number,
+            isActive: args.data.isActive as boolean,
+            designSpecification: args.data.designSpecification,
+          };
+          rows.push(row);
+          return { ...designRecord, id: 'design-2', sourceType: 'AI_EDIT', ...row };
+        }),
+      },
+      aiUsage: { create: jest.fn(async () => ({ id: 'usage-1' })) },
+      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    };
+    const provider = { refineHtml: jest.fn() };
+    const stitch = {
+      editHtml: jest.fn(async (input: { screenId: string }) => ({
+        title: 'Ahmad & Sara',
+        description: 'Luxury romantic wedding',
+        body: '<main><h1>Ahmad &amp; Sara</h1><p>June 20, 2027</p><figure>Large hero</figure></main>',
+        css:
+          input.screenId === 'design-1'
+            ? 'body{color:#765432} h1{font-family:serif}'
+            : 'body{color:#800020} h1{font-family:serif}',
+        projectId: 'project-1',
+        screenId: input.screenId === 'design-1' ? 'design-2' : 'design-3',
+      })),
+    };
+
+    const service = new InvitationDesignsService(
+      prisma as never,
+      provider as never,
+      undefined,
+      stitch as never
+    );
+    const result = await service.refineHtmlWithAi(
+      'owner-1',
+      invitationId,
+      'Make the typography more elegant and make the hero image larger.'
+    );
+
+    expect(stitch.editHtml).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        screenId: 'design-1',
+        prompt: 'Make the typography more elegant and make the hero image larger.',
+        event: expect.objectContaining({
+          description: expect.stringContaining('Ivory and gold'),
+        }),
+      })
+    );
+    expect(provider.refineHtml).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      version: 2,
+      artifact: { stitch: { projectId: 'project-1', screenId: 'design-2' } },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ version: 1, isActive: false });
+    expect(rows[1]).toMatchObject({ version: 2, isActive: true });
+
+    const second = await service.refineHtmlWithAi(
+      'owner-1',
+      invitationId,
+      'Change the palette to burgundy and champagne.'
+    );
+    expect(stitch.editHtml).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        screenId: 'design-2',
+        prompt: 'Change the palette to burgundy and champagne.',
+        event: expect.objectContaining({ description: expect.stringContaining('June 20, 2027') }),
+      })
+    );
+    expect(second).toMatchObject({
+      version: 3,
+      artifact: { stitch: { projectId: 'project-1', screenId: 'design-3' } },
+    });
+    expect(rows).toHaveLength(3);
   });
 
   it('rejects empty edits and leaves the existing version intact when refinement fails', async () => {
@@ -587,10 +832,109 @@ describe('InvitationDesignsService', () => {
       service.refineHtmlWithAi('owner-1', invitationId, 'Make the colors warmer.')
     ).rejects.toMatchObject({
       status: 502,
-      message: 'AI generation timed out. Please try again.',
+      message: 'The AI service is temporarily unavailable. Your previous design is safe.',
     });
     expect(writes).not.toHaveBeenCalled();
     expect(usage).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED' }) })
+    );
+  });
+
+  it('returns a safe preserved-design message for provider payment failures', async () => {
+    const original = {
+      format: 'html',
+      version: 1,
+      title: 'Garden Dinner',
+      description: 'A calm evening',
+      body: '<main><h1>Garden Dinner</h1></main>',
+      css: 'body{color:#123}',
+    };
+    const writes = jest.fn();
+    const prisma = {
+      invitation: {
+        findFirst: async () => ({
+          id: invitationId,
+          event,
+          designs: [{ ...designRecord, designSpecification: original }],
+        }),
+      },
+      invitationDesign: { updateMany: writes, create: writes },
+      aiUsage: { create: async () => ({ id: 'usage-failed' }) },
+    };
+    const provider = {
+      refineHtml: async () => {
+        throw new InvitationAiProviderError(
+          'provider payment response',
+          'provider',
+          undefined,
+          402
+        );
+      },
+    };
+    const service = new InvitationDesignsService(prisma as never, provider as never);
+
+    await expect(
+      service.refineHtmlWithAi('owner-1', invitationId, 'Change colors to navy and gold.')
+    ).rejects.toMatchObject({
+      status: 502,
+      message:
+        'Unable to update the invitation right now. Your previous design is safe. Please try again.',
+    });
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it('preserves the active version and published version when the version transaction fails', async () => {
+    const original = {
+      format: 'html',
+      version: 1,
+      title: 'Garden Dinner',
+      description: 'A calm evening',
+      body: '<main><h1>Garden Dinner</h1></main>',
+      css: 'body{color:#123}',
+    };
+    const transaction = jest.fn(async () => {
+      throw new Error('database internals must not be exposed');
+    });
+    const updateMany = jest.fn(async () => ({ count: 1 }));
+    const create = jest.fn(async () => ({ ...designRecord, version: 2, isActive: true }));
+    const usageCreate = jest.fn(async () => ({ id: 'usage-1' }));
+    const findInvitation = jest.fn(async () => ({
+      id: invitationId,
+      publishedDesignVersion: 1,
+      event,
+      designs: [{ ...designRecord, version: 1, designSpecification: original }],
+    }));
+    const prisma = {
+      invitation: { findFirst: findInvitation },
+      invitationDesign: { updateMany, create },
+      aiUsage: { create: usageCreate },
+      $transaction: transaction,
+    };
+    const provider = {
+      refineHtml: async () => ({
+        artifact: {
+          title: 'Navy and Gold Dinner',
+          description: 'A calm evening',
+          body: '<main><h1>Navy and Gold Dinner</h1></main>',
+          css: 'body{color:#123}',
+        },
+        tokensUsed: 12,
+        provider: 'test',
+        model: 'test-model',
+        project: { name: '', description: '', files: [] },
+      }),
+    };
+    const service = new InvitationDesignsService(prisma as never, provider as never);
+
+    await expect(
+      service.refineHtmlWithAi('owner-1', invitationId, 'Change the colors to navy and gold.')
+    ).rejects.toBeInstanceOf(InternalServerErrorException);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(original).toMatchObject({ version: 1, title: 'Garden Dinner' });
+    expect(findInvitation).toHaveBeenCalledTimes(1);
+    expect(usageCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED' }) })
     );
   });
@@ -886,14 +1230,19 @@ describe('InvitationDesignsService', () => {
       $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
     };
     let capturedSignal: AbortSignal | undefined;
-    const provider = {
+    const stitch = {
       generateHtml: async (input: { signal?: AbortSignal }) => {
         capturedSignal = input.signal;
         throw new AiGenerationCancelledError();
       },
     };
     const controller = new AbortController();
-    const error = await new InvitationDesignsService(prisma as never, provider as never)
+    const error = await new InvitationDesignsService(
+      prisma as never,
+      undefined,
+      undefined,
+      stitch as never
+    )
       .generateHtmlWithAi(
         'owner-1',
         invitationId,
@@ -927,31 +1276,23 @@ describe('InvitationDesignsService', () => {
       },
       $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
     };
-    const provider = {
+    const stitch = {
       generateHtml: async () => ({
-        artifact: {
-          title: 'Garden Dinner',
-          description: 'An elegant evening among the garden.',
-          body: '<main><h1>Garden Dinner</h1></main>',
-          css: 'body{margin:0}',
-        },
-        project: {
-          name: 'Garden Dinner',
-          description: 'An elegant evening among the garden.',
-          files: [
-            { path: 'index.html', content: '<main><h1>Garden Dinner</h1></main>' },
-            { path: 'styles.css', content: 'body{margin:0}' },
-          ],
-        },
-        tokensUsed: 10,
-        provider: 'test',
-        model: 'test-model',
+        title: 'Garden Dinner',
+        description: 'An elegant evening among the garden.',
+        body: '<main><h1>Garden Dinner</h1></main>',
+        css: 'body{margin:0}',
       }),
     };
     const controller = new AbortController();
     controller.abort();
     await expect(
-      new InvitationDesignsService(prisma as never, provider as never).generateHtmlWithAi(
+      new InvitationDesignsService(
+        prisma as never,
+        undefined,
+        undefined,
+        stitch as never
+      ).generateHtmlWithAi(
         'owner-1',
         invitationId,
         'Create a calm garden dinner invitation',

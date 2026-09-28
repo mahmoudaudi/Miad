@@ -1,4 +1,14 @@
-import { Body, Controller, Param, ParseUUIDPipe, Post, Req, Sse, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  Sse,
+  UseGuards,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { Observable } from 'rxjs';
@@ -25,6 +35,11 @@ export class AiStudioController {
     private readonly studio: AiStudioService,
     private readonly progress: AiGenerationProgressService
   ) {}
+
+  @Get('models')
+  models() {
+    return this.studio.getAiModels();
+  }
 
   @Sse('generation-progress/:generationId')
   progressStream(
@@ -95,7 +110,10 @@ export class AiStudioController {
         user.sub,
         dto.prompt,
         dto.generationId,
-        controller.signal
+        controller.signal,
+        dto.modelPreference ?? 'auto',
+        dto.idempotencyKey,
+        ...(dto.imageIds ? [dto.imageIds] : [])
       );
     } catch (error) {
       // A routine user cancellation with nobody left to answer: swallowing
@@ -130,7 +148,11 @@ export class AiStudioController {
         user.sub,
         dto.invitationId,
         dto.prompt,
-        controller.signal
+        controller.signal,
+        dto.generationId,
+        dto.modelPreference ?? 'auto',
+        dto.idempotencyKey,
+        ...(dto.imageIds ? [dto.imageIds] : [])
       );
     } catch (error) {
       if (

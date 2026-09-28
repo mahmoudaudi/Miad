@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { parseSmartAnalysis } from '../ai-studio/smart-question.types';
 import {
   AiGenerationCancelledError,
   InvitationAiAnalysisRequest,
@@ -12,6 +13,8 @@ import {
   InvitationHtmlAiResult,
   type GeneratedWebsiteProject,
 } from './ai-provider.types';
+import { AiModelRoutingService, type AiModelOperation } from './ai-model-routing.service';
+import { HtmlArtifactValidationError } from './html-artifact';
 
 type OpenRouterResponse = {
   choices?: Array<{
@@ -102,7 +105,7 @@ const invitationDesignSchema = {
           id: { type: 'string', minLength: 1, maxLength: 64 },
           type: {
             type: 'string',
-            enum: ['hero', 'details', 'story', 'schedule', 'rsvp', 'note'],
+            enum: ['hero', 'details', 'story', 'schedule', 'note'],
           },
           title: { type: 'string', minLength: 1, maxLength: 120 },
           body: { type: 'string', minLength: 1, maxLength: 500 },
@@ -171,7 +174,8 @@ const eventDetailsSchema = {
 /**
  * Completion budget for one website project.
  *
- * This is not a timeout. It must be large enough that the model can finish the
+ * Provider attempts have a bounded timeout, but the completion budget must be
+ * large enough that the model can finish the
  * JSON envelope, because a response cut off mid-object is unparseable. Reasoning
  * tokens count against the same budget, so a verbose model can spend most of it
  * before writing any source. Observed truncations at 12000 (finishReason
@@ -186,10 +190,16 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
   protected model: string;
   private readonly baseUrl: string;
   protected readonly extractionTimeoutMs: number;
+  private readonly requestTimeoutMs: number;
+  private readonly modelRouting: AiModelRoutingService;
   private readonly diagnosticsEnabled: boolean;
+  private readonly strictDesignValidation: boolean;
   protected providerName = 'openrouter';
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    @Optional() modelRouting?: AiModelRoutingService
+  ) {
     this.apiKey =
       this.config.get<string>('openrouterApiKey') ||
       this.config.get<string>('OPENROUTER_API_KEY') ||
@@ -198,6 +208,7 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
       this.config.get<string>('openrouterModel') ||
       this.config.get<string>('OPENROUTER_MODEL') ||
       'deepseek/deepseek-v4.1-flash';
+    this.modelRouting = modelRouting ?? new AiModelRoutingService(config);
     this.baseUrl = (
       this.config.get<string>('openrouterBaseUrl') ||
       this.config.get<string>('OPENROUTER_BASE_URL') ||
@@ -209,6 +220,14 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
       this.config.get<number>('aiProviderTimeoutMs') ||
       this.config.get<number>('AI_PROVIDER_TIMEOUT_MS') ||
       20_000;
+    this.requestTimeoutMs =
+      this.config.get<number>('openrouterRequestTimeoutMs') ||
+      this.config.get<number>('OPENROUTER_REQUEST_TIMEOUT_MS') ||
+      120_000;
+    this.strictDesignValidation =
+      this.config.get<boolean>('aiStrictDesignValidation') ??
+      this.config.get<boolean>('AI_STRICT_DESIGN_VALIDATION') ??
+      false;
     this.diagnosticsEnabled =
       (this.config.get<string>('nodeEnv') ??
         this.config.get<string>('NODE_ENV') ??
@@ -217,24 +236,41 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
   }
 
   async generateDesign(input: InvitationAiGenerateInput): Promise<InvitationAiResult> {
-    // No application-level deadline: the request stays active while the
-    // provider is genuinely processing. The caller cancels explicitly.
-    const response = await this.requestJson(
-      this.designSystemPrompt(),
-      JSON.stringify({
-        operation: input.operation,
-        prompt: input.prompt,
-        event: input.event,
-        currentDesign: input.currentDesign,
-      }),
-      2600,
-      'structured-design-generation'
+    const operation: AiModelOperation = input.operation === 'refine' ? 'refinement' : 'generation';
+    const routed = await this.withModelFallback(
+      operation,
+      'structured-design-generation',
+      async (model) => {
+        const response = await this.requestJson(
+          this.designSystemPrompt(),
+          JSON.stringify({
+            operation: input.operation,
+            prompt: input.prompt,
+            event: input.event,
+            currentDesign: input.currentDesign,
+          }),
+          2600,
+          'structured-design-generation',
+          { model }
+        );
+        if (!isObject(response.value)) this.invalidModelOutput('structured-design-shape');
+        if (input.validateSpecification) {
+          try {
+            input.validateSpecification(response.value);
+          } catch {
+            this.invalidModelOutput('structured-design-validation');
+          }
+        }
+        return response;
+      },
+      { modelPreference: input.modelPreference }
     );
+    const { value: response, model } = routed;
     return {
       specification: response.value as InvitationAiResult['specification'],
       tokensUsed: response.tokensUsed,
       provider: this.providerName,
-      model: this.model,
+      model,
     };
   }
 
@@ -242,33 +278,61 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
     return this.generateWebsiteProject({
       prompt: input.prompt,
       event: input.event,
+      modelOperation: 'generation',
+      modelPreference: input.modelPreference,
       onProgress: input.onProgress,
       signal: input.signal,
     });
   }
 
   async refineHtml(input: {
+    invitationId?: string;
     prompt: string;
     event: InvitationHtmlAiGenerateInput['event'];
     project: GeneratedWebsiteProject;
     signal?: AbortSignal;
+    onProgress?: InvitationHtmlAiGenerateInput['onProgress'];
+    validateArtifact?: (artifact: InvitationHtmlAiResult['artifact']) => void;
+    modelPreference?: 'auto' | string;
   }): Promise<InvitationHtmlAiResult> {
     return this.generateWebsiteProject({
       prompt: input.prompt,
       event: input.event,
       currentProject: input.project,
+      modelOperation: 'refinement',
+      modelPreference: input.modelPreference,
+      invitationId: input.invitationId,
       signal: input.signal,
+      onProgress: input.onProgress,
+      validateArtifact: input.validateArtifact,
     });
   }
 
-  async extractEventDetails(prompt: string): Promise<InvitationAiEventDetails> {
-    const response = await this.requestJson(
-      'Extract event details from the user prompt. Return JSON only with title, eventType, eventDate (YYYY-MM-DD or null), and venueName (or null). Never invent a venue or date. Expected shape: ' +
-        JSON.stringify(eventDetailsSchema),
-      prompt,
-      400,
+  async extractEventDetails(
+    prompt: string,
+    modelPreference: 'auto' | string = 'auto'
+  ): Promise<InvitationAiEventDetails> {
+    const { value: response } = await this.withModelFallback(
+      'generation',
       'event-detail-extraction',
-      { timeoutMs: this.extractionTimeoutMs }
+      async (model) => {
+        const result = await this.requestJson(
+          'Extract event details from the user prompt. Return JSON only with title, eventType, eventDate (YYYY-MM-DD or null), and venueName (or null). Never invent a venue or date. Expected shape: ' +
+            JSON.stringify(eventDetailsSchema),
+          prompt,
+          400,
+          'event-detail-extraction',
+          { timeoutMs: this.extractionTimeoutMs, model }
+        );
+        if (
+          !isObject(result.value) ||
+          typeof result.value.title !== 'string' ||
+          typeof result.value.eventType !== 'string'
+        )
+          this.invalidModelOutput('event-details-shape');
+        return result;
+      },
+      { modelPreference }
     );
     return response.value as InvitationAiEventDetails;
   }
@@ -279,17 +343,26 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
    * budget — this must stay fast and never become a second generator.
    */
   async analyzeDetails(input: InvitationAiAnalysisRequest): Promise<unknown> {
-    const response = await this.requestJson(
-      this.smartQuestionSystemPrompt(),
-      JSON.stringify({
-        prompt: input.prompt,
-        collectedData: input.collectedData,
-        answers: input.answers,
-        lastQuestionId: input.lastQuestionId ?? null,
-      }),
-      900,
+    const { value: response } = await this.withModelFallback(
+      'smart-questions',
       'smart-question-analysis',
-      { signal: input.signal, timeoutMs: this.extractionTimeoutMs }
+      async (model) => {
+        const result = await this.requestJson(
+          this.smartQuestionSystemPrompt(),
+          JSON.stringify({
+            prompt: input.prompt,
+            collectedData: input.collectedData,
+            answers: input.answers,
+            lastQuestionId: input.lastQuestionId ?? null,
+          }),
+          900,
+          'smart-question-analysis',
+          { signal: input.signal, timeoutMs: this.extractionTimeoutMs, model }
+        );
+        if (!parseSmartAnalysis(result.value)) this.invalidModelOutput('smart-analysis-shape');
+        return result;
+      },
+      { modelPreference: input.modelPreference }
     );
     return response.value;
   }
@@ -297,42 +370,89 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
   private async generateWebsiteProject(input: {
     prompt: string;
     event: InvitationHtmlAiGenerateInput['event'];
+    modelOperation: 'generation' | 'refinement';
+    modelPreference?: 'auto' | string;
+    invitationId?: string;
+    validateArtifact?: (artifact: InvitationHtmlAiResult['artifact']) => void;
     currentProject?: GeneratedWebsiteProject;
     onProgress?: InvitationHtmlAiGenerateInput['onProgress'];
     signal?: AbortSignal;
   }): Promise<InvitationHtmlAiResult> {
-    // No application-level deadline: the request stays active while the
-    // provider is genuinely processing. The caller cancels explicitly.
     // The abort signal and progress callback stay out of the model payload.
-    const response = await this.requestJson(
-      this.websiteSystemPrompt(Boolean(input.currentProject)),
-      JSON.stringify({
-        prompt: input.prompt,
-        event: input.event,
-        currentProject: input.currentProject,
-      }),
-      WEBSITE_GENERATION_MAX_TOKENS,
-      input.currentProject ? 'website-refinement' : 'website-generation',
+    const operation = input.currentProject ? 'website-refinement' : 'website-generation';
+    let stage = 'provider-request';
+    const {
+      value: { response, project, artifact },
+      model,
+    } = await this.withModelFallback(
+      input.modelOperation,
+      operation,
+      async (model) => {
+        stage = 'provider-request';
+        const result = await this.requestJson(
+          this.websiteSystemPrompt(Boolean(input.currentProject)),
+          JSON.stringify({
+            prompt: input.prompt,
+            event: input.event,
+            currentProject: input.currentProject,
+          }),
+          WEBSITE_GENERATION_MAX_TOKENS,
+          operation,
+          {
+            model,
+            signal: input.signal,
+            onResponseReceived: () => {
+              stage = 'response-parsing';
+              input.onProgress?.('PARSING_RESPONSE');
+            },
+          }
+        );
+        stage = 'output-normalization';
+        input.onProgress?.('VALIDATING_WEBSITE');
+        const project = this.parseWebsiteProject(result.value);
+        const html = project.files.find((file) => file.path === 'index.html')!.content;
+        const css = project.files.find((file) => file.path === 'styles.css')!.content;
+        const artifact = {
+          title: project.name,
+          description: project.description,
+          body: html,
+          css,
+        };
+        if (input.validateArtifact) {
+          stage = 'artifact-validation';
+          try {
+            input.validateArtifact(artifact);
+          } catch (error) {
+            if (error instanceof HtmlArtifactValidationError && error.category === 'security') {
+              this.diagnostic('model-output-validation-failure', {
+                reason: 'html-artifact-security-validation',
+              });
+              throw new InvitationAiProviderError(
+                'AI output did not pass security validation.',
+                'invalid-output',
+                undefined,
+                null,
+                false
+              );
+            }
+            this.invalidModelOutput('html-artifact-validation');
+          }
+        }
+        stage = 'output-validated';
+        return { response: result, project, artifact };
+      },
       {
-        signal: input.signal,
-        onResponseReceived: () => input.onProgress?.('PARSING_RESPONSE'),
+        invitationId: input.invitationId,
+        stage: () => stage,
+        modelPreference: input.modelPreference,
       }
     );
-    input.onProgress?.('VALIDATING_WEBSITE');
-    const project = this.parseWebsiteProject(response.value);
-    const html = project.files.find((file) => file.path === 'index.html')!;
-    const css = project.files.find((file) => file.path === 'styles.css')!;
     return {
       project,
-      artifact: {
-        title: project.name,
-        description: project.description,
-        body: html.content,
-        css: css.content,
-      },
+      artifact,
       tokensUsed: response.tokensUsed,
       provider: this.providerName,
-      model: this.model,
+      model,
     };
   }
 
@@ -341,19 +461,39 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
     user: string,
     maxTokens: number,
     operation: string,
-    options: { timeoutMs?: number; signal?: AbortSignal; onResponseReceived?: () => void } = {}
+    options: {
+      model?: string;
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      onResponseReceived?: () => void;
+    } = {}
   ): Promise<{ value: unknown; tokensUsed: number | null }> {
+    const model = options.model ?? this.model;
     if (!this.apiKey) {
+      if (this.diagnosticsEnabled) {
+        this.logger.warn({
+          event: 'provider-request-failure',
+          provider: this.providerName,
+          operation,
+          model,
+          failureCategory: 'configuration',
+          httpStatus: null,
+          responseContentType: 'unavailable',
+          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+          durationMs: 0,
+        });
+      }
       throw new InvitationAiProviderError('AI provider is not configured.', 'configuration');
     }
-    const { timeoutMs, signal, onResponseReceived } = options;
+    const { signal, onResponseReceived } = options;
+    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
     const controller = new AbortController();
     const startedAt = Date.now();
-    // Only callers that pass an explicit budget (event-detail extraction)
-    // arm a timer. Generation requests stay active until the provider
-    // responds or the caller cancels explicitly.
-    const timeout =
-      timeoutMs !== undefined ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+    let httpStatus: number | null = null;
+    let responseContentType = 'unavailable';
+    let failurePhase: 'request' | 'http-response' | 'response-content' | 'model-json-parse' =
+      'request';
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const onExternalAbort = () => controller.abort();
     if (signal?.aborted) {
       controller.abort();
@@ -366,7 +506,7 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
         signal: controller.signal,
         headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: this.model,
+          model,
           messages: [
             { role: 'system', content: system },
             { role: 'user', content: user },
@@ -376,11 +516,14 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
           temperature: 0.7,
         }),
       });
+      httpStatus = response.status;
+      responseContentType = response.headers.get('content-type') ?? 'missing';
+      failurePhase = response.ok ? 'response-content' : 'http-response';
       const bodyText = await response.text();
       const responseMetadata: Record<string, string | number | boolean | string[]> = {
         operation,
         httpStatus: response.status,
-        model: this.model,
+        model,
         durationMs: Date.now() - startedAt,
         contentType: response.headers.get('content-type') ?? 'unknown',
         responseLength: bodyText.length,
@@ -388,13 +531,34 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
       if (timeoutMs !== undefined) responseMetadata.timeoutMs = timeoutMs;
       this.diagnostic('provider-response', responseMetadata);
       if (!response.ok) {
+        const retryable =
+          response.status === 404 ||
+          response.status === 408 ||
+          response.status === 429 ||
+          response.status >= 500;
+        const failureCategory =
+          response.status === 402
+            ? 'payment-required'
+            : response.status === 429
+              ? 'rate-limit'
+              : retryable
+                ? 'provider-unavailable'
+                : 'request-rejected';
         this.diagnostic('provider-http-failure', {
           operation,
           httpStatus: response.status,
+          failureCategory,
           durationMs: Date.now() - startedAt,
         });
-        throw new InvitationAiProviderError('AI provider request failed.', 'provider');
+        throw new InvitationAiProviderError(
+          'AI provider request failed.',
+          response.status === 400 ? 'input' : 'provider',
+          undefined,
+          response.status,
+          retryable
+        );
       }
+      failurePhase = 'model-json-parse';
       let body: OpenRouterResponse;
       try {
         body = JSON.parse(bodyText) as OpenRouterResponse;
@@ -444,7 +608,13 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
               }
             : {}),
         });
-        throw new InvitationAiProviderError('AI provider returned no usable output.', 'provider');
+        throw new InvitationAiProviderError(
+          'AI provider returned no usable output.',
+          'invalid-output',
+          undefined,
+          response.status,
+          true
+        );
       }
       onResponseReceived?.();
       return {
@@ -452,7 +622,6 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
         tokensUsed: body.usage?.total_tokens ?? null,
       };
     } catch (error) {
-      if (error instanceof InvitationAiProviderError) throw error;
       if (signal?.aborted) {
         this.diagnostic('provider-cancelled', {
           operation,
@@ -460,28 +629,158 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
         });
         throw new AiGenerationCancelledError();
       }
+      if (this.diagnosticsEnabled) {
+        const failureCategory =
+          error instanceof InvitationAiProviderError && error.status === 'configuration'
+            ? 'configuration'
+            : (error instanceof InvitationAiProviderError && error.status === 'timeout') ||
+                (error instanceof Error && error.name === 'AbortError')
+              ? 'timeout'
+              : failurePhase === 'http-response'
+                ? 'http-failure'
+                : failurePhase === 'model-json-parse'
+                  ? 'model-json-parse-failure'
+                  : failurePhase === 'response-content'
+                    ? 'response-content-failure'
+                    : 'request-failure';
+        this.logger.warn({
+          event: 'provider-request-failure',
+          provider: this.providerName,
+          operation,
+          model,
+          failureCategory,
+          httpStatus,
+          responseContentType,
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          durationMs: Date.now() - startedAt,
+        });
+      }
+      if (error instanceof InvitationAiProviderError) throw error;
       if (error instanceof Error && error.name === 'AbortError') {
         this.diagnostic('provider-timeout', {
           operation,
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
           durationMs: Date.now() - startedAt,
         });
-        throw new InvitationAiProviderError('AI provider timed out.', 'timeout');
+        throw new InvitationAiProviderError(
+          'AI provider timed out.',
+          'timeout',
+          undefined,
+          httpStatus,
+          true
+        );
       }
       this.diagnostic('provider-request-failure', {
         operation,
         durationMs: Date.now() - startedAt,
         errorType: error instanceof Error ? error.name : typeof error,
       });
-      throw new InvitationAiProviderError('AI provider returned invalid output.', 'invalid-output');
+      if (error instanceof TypeError) {
+        throw new InvitationAiProviderError(
+          'AI provider is unavailable.',
+          'provider',
+          undefined,
+          httpStatus,
+          true
+        );
+      }
+      throw new InvitationAiProviderError(
+        'AI provider returned invalid output.',
+        'invalid-output',
+        undefined,
+        httpStatus,
+        true
+      );
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
       signal?.removeEventListener('abort', onExternalAbort);
     }
   }
 
+  private async withModelFallback<T>(
+    operation: AiModelOperation,
+    requestOperation: string,
+    execute: (model: string) => Promise<T>,
+    context: {
+      invitationId?: string;
+      stage?: () => string;
+      modelPreference?: 'auto' | string;
+    } = {}
+  ): Promise<{ value: T; model: string }> {
+    const models =
+      this.providerName === 'openrouter'
+        ? await this.modelRouting.candidatesForPreference(operation, context.modelPreference)
+        : [this.model];
+    let lastError: unknown;
+    for (const [index, model] of models.entries()) {
+      const startedAt = Date.now();
+      const fallbackUsed =
+        index > 0 ||
+        (Boolean(context.modelPreference) &&
+          context.modelPreference !== 'auto' &&
+          model !== context.modelPreference);
+      try {
+        const value = await execute(model);
+        this.diagnostic('model-route-attempt', {
+          operation: requestOperation,
+          ...(context.invitationId ? { invitationId: context.invitationId } : {}),
+          model,
+          attempt: index + 1,
+          stage: context.stage?.() ?? 'provider-request',
+          result: 'success',
+          fallbackUsed,
+          fallbackTriggered: false,
+          failureCategory: 'none',
+          durationMs: Date.now() - startedAt,
+        });
+        return { value, model };
+      } catch (error) {
+        lastError = error;
+        const retryable = error instanceof InvitationAiProviderError && error.retryable;
+        const category =
+          error instanceof InvitationAiProviderError
+            ? error.httpStatus === 402
+              ? 'payment-required'
+              : error.status === 'provider' && error.httpStatus === 429
+                ? 'rate-limit'
+                : error.status
+            : 'internal-error';
+        this.diagnostic('model-route-attempt', {
+          operation: requestOperation,
+          ...(context.invitationId ? { invitationId: context.invitationId } : {}),
+          model,
+          attempt: index + 1,
+          stage: context.stage?.() ?? 'provider-request',
+          result: 'failed',
+          failureCategory: category,
+          ...(error instanceof InvitationAiProviderError && error.httpStatus != null
+            ? { httpStatus: error.httpStatus }
+            : {}),
+          fallbackUsed,
+          fallbackTriggered: index < models.length - 1 && retryable,
+          durationMs: Date.now() - startedAt,
+        });
+        if (!retryable || index === models.length - 1) throw error;
+      }
+    }
+    throw lastError ?? new InvitationAiProviderError('AI provider request failed.', 'provider');
+  }
+
+  private invalidModelOutput(reason: string): never {
+    this.diagnostic('model-output-validation-failure', { reason });
+    throw new InvitationAiProviderError(
+      'AI provider returned invalid output.',
+      'invalid-output',
+      undefined,
+      null,
+      true
+    );
+  }
+
   private parseWebsiteProject(value: unknown): GeneratedWebsiteProject {
     const normalized = this.normalizeWebsiteProject(value);
+    if (!this.strictDesignValidation)
+      return this.normalizeCompatibleWebsiteProject(normalized.project);
     const project = normalized.project as Partial<GeneratedWebsiteProject>;
     if (!project || typeof project !== 'object' || Array.isArray(project)) {
       return this.invalidProject('project-wrapper');
@@ -561,6 +860,75 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
   }
 
   /**
+   * Temporary compatibility normalizer. It accepts renderable HTML/CSS from
+   * common response envelopes while leaving all size and executable-content
+   * checks in place. The resulting artifact is still passed through the HTML
+   * sanitizer before it can be saved or rendered.
+   */
+  private normalizeCompatibleWebsiteProject(value: unknown): GeneratedWebsiteProject {
+    if (!isObject(value)) return this.invalidProject('project-wrapper');
+    const htmlLimit = 30_000;
+    const cssLimit = 25_000;
+    const project = isObject(value.website)
+      ? value.website
+      : isObject(value.design)
+        ? value.design
+        : isObject(value.invitation)
+          ? value.invitation
+          : value;
+    let html: unknown = project.html ?? project.body ?? project.markup;
+    let css: unknown = project.css ?? project.styles ?? project.styleSheet;
+    const title: unknown = project.name ?? project.title;
+    const description: unknown = project.description ?? project.summary;
+
+    if (Array.isArray(project.files)) {
+      for (const item of project.files) {
+        if (!isObject(item)) continue;
+        const path = String(item.path ?? item.name ?? item.filename ?? '').toLowerCase();
+        const content = item.content ?? item.code;
+        if (typeof content !== 'string') continue;
+        if (path.endsWith('.html') || path === 'html') html ??= content;
+        if (path.endsWith('.css') || path === 'css') css ??= content;
+      }
+    } else if (isObject(project.files)) {
+      html ??= project.files['index.html'] ?? project.files['html'];
+      css ??= project.files['styles.css'] ?? project.files['css'];
+    }
+
+    if (typeof html !== 'string' || !html.trim() || html.length > htmlLimit) {
+      return this.invalidProject('project-html');
+    }
+    const normalizedCss =
+      typeof css === 'string' && css.trim() ? css : 'body{margin:0;font-family:serif}';
+    if (normalizedCss.length > cssLimit) {
+      return this.invalidProject('project-css');
+    }
+    const normalizedTitle = typeof title === 'string' && title.trim() ? title : 'Invitation';
+    const normalizedDescription =
+      typeof description === 'string' && description.trim() ? description : 'You are invited.';
+    const safeTitle = this.clampText(normalizedTitle, 120, 'name');
+    const safeDescription = this.clampText(normalizedDescription, 300, 'description');
+    if (
+      /<\s*\/?(?:script|iframe|object|embed|form|input|button|svg|math|canvas|img|video|audio)\b|\bon[a-z]+\s*=|\b(?:src|href|action)\s*=|(?:javascript|vbscript|data)\s*:/i.test(
+        html
+      ) ||
+      /(?:@import|url\s*\(|image-set\s*\(|expression\s*\(|javascript\s*:|data\s*:|https?\s*:|file\s*:|blob\s*:|-moz-binding|behavior\s*:)/i.test(
+        normalizedCss
+      )
+    ) {
+      return this.invalidProject('unsafe-source');
+    }
+    return {
+      name: safeTitle,
+      description: safeDescription,
+      files: [
+        { path: 'index.html', content: html },
+        { path: 'styles.css', content: normalizedCss },
+      ],
+    };
+  }
+
+  /**
    * OpenRouter models can return either the requested wrapper or the project
    * directly. Normalize only those two envelopes; all project constraints are
    * intentionally enforced below by the existing strict validator.
@@ -609,7 +977,13 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
       markdownFencePresent: Boolean(fenced),
       contentLength: content.length,
     });
-    throw new InvitationAiProviderError('AI provider returned invalid output.', 'invalid-output');
+    throw new InvitationAiProviderError(
+      'AI provider returned invalid output.',
+      'invalid-output',
+      undefined,
+      null,
+      true
+    );
   }
 
   /**
@@ -665,7 +1039,13 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
       'project-validation-failure',
       structure ? { category, ...structure } : { category }
     );
-    throw new InvitationAiProviderError('AI provider returned invalid output.', 'invalid-output');
+    throw new InvitationAiProviderError(
+      'AI provider returned invalid output.',
+      'invalid-output',
+      undefined,
+      null,
+      true
+    );
   }
 
   protected diagnostic(
@@ -685,6 +1065,7 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
       'For refine operations, modify the supplied currentDesign instead of creating an unrelated design.',
       'Do not include HTML, scripts, markdown, tracking URLs, or unsafe image URLs.',
       'Use only supported theme, font, section, and element values.',
+      'Generate visual invitation content only. Never generate RSVP sections, forms, buttons, functionality, or logic; never generate countdown timers or displays, authentication, billing, or credits. RSVP is rendered separately by the application.',
       'Keep all text polished, concise, and suitable for a public invitation.',
     ].join(' ');
   }
@@ -709,15 +1090,20 @@ export class OpenRouterInvitationAiProvider implements InvitationAiProvider {
       'The project object must contain only name, description, and files. Each file object must contain only path and content. Use exactly two files: one with path "index.html" and one with path "styles.css".',
       'Keep name at 100 characters or fewer and description at 240 characters or fewer.',
       'Generate a real, standalone, premium event-invitation website project, not an editor, dashboard, or marketing page.',
-      'The HTML must be a semantic body fragment and CSS must be self-contained. Build the requested sections only; choose from hero, details, story, countdown-style display, schedule, venue, gallery-style layout, RSVP prompt, and footer as appropriate.',
+      'The HTML must be a semantic body fragment and CSS must be self-contained. Focus only on visual design, layout, typography, colors, decorative elements, and user-requested invitation content.',
       'Keep the two-file project compact: combined source must stay below 14000 characters, with HTML below 9500 characters and CSS below 4500 characters. Stay well inside that budget so the response is never cut off before it is complete.',
       'Prioritize exceptional visual hierarchy, accessible contrast, clean typography, responsive mobile/tablet/desktop layout, tasteful CSS-only animations, consistent spacing, and no horizontal overflow.',
       'Do not use React, JavaScript, TypeScript, scripts, event handlers, forms, iframe, SVG, canvas, images, links, external resources, @import, url(), network requests, credentials, secrets, APIs, shell commands, filesystem access, or tracking.',
       'Do not generate backend code or anything that can access cookies, local storage, the parent application, authentication, or a preview sandbox escape.',
+      'Never generate RSVP sections, forms, buttons, controls, functionality, or logic. Never generate countdown timers or countdown displays, authentication, billing, or credits. The SaaS injects its RSVP form separately outside the generated invitation document.',
       'Preserve supplied event facts truthfully. Do not invent dates, venues, addresses, or logistics.',
       isRefinement
         ? 'Modify the supplied currentProject to fulfill the refinement prompt. Keep unrelated layout and content intact whenever possible.'
         : 'Create the invitation from the supplied prompt and event facts.',
     ].join(' ');
   }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

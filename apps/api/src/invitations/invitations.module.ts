@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
-import { MediaModule } from '../media/media.module';
+import { InvitationImagesModule } from '../invitation-images/invitation-images.module';
 import { InvitationDesignsModule } from '../invitation-designs/invitation-designs.module';
 import { InvitationsController } from './invitations.controller';
 import { InvitationsService } from './invitations.service';
 
 @Module({
-  imports: [AuthModule, MediaModule, InvitationDesignsModule],
+  imports: [AuthModule, InvitationImagesModule, InvitationDesignsModule],
   controllers: [InvitationsController],
   providers: [InvitationsService],
   exports: [InvitationsService],

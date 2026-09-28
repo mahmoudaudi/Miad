@@ -1,7 +1,9 @@
-import Link from 'next/link';
+'use client';
+
 import React from 'react';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { trackingFor, type Locale } from '@/lib/i18n/locales';
+import { AuthModalTrigger } from './AuthModalTrigger';
 import { BTN_PRIMARY, BTN_SECONDARY, CONTAINER } from './theme';
 import { Reveal } from './Reveal';
 
@@ -24,72 +26,84 @@ export function Pricing({ locale }: { locale: Locale }) {
         </Reveal>
         <div className="grid grid-cols-1 items-stretch gap-6 md:grid-cols-3">
           {t.tiers.map((tier) => (
-            <div
-              key={tier.name}
-              className={
-                tier.featured
-                  ? 'relative flex flex-col justify-between rounded-2xl bg-ink p-6 text-white shadow-lift sm:p-8'
-                  : 'flex flex-col justify-between rounded-2xl border border-line bg-background p-6 sm:p-8'
-              }
-            >
-              {tier.featured && (
-                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-accent px-3 py-1 text-label-sm font-semibold text-white">
-                  {t.popular}
-                </div>
-              )}
-              <div>
-                <div
-                  className={`mb-2 text-label-sm uppercase tracking-wider ${tier.featured ? 'text-white/70' : 'text-muted'}`}
-                >
-                  {tier.name}
-                </div>
-                <div
-                  className={`mb-4 font-display text-4xl ${tier.featured ? 'text-white' : 'text-ink'}`}
-                >
-                  {tier.price}{' '}
-                  <span
-                    className={`font-body-md text-body-md ${tier.featured ? 'text-white/70' : 'text-muted'}`}
-                  >
-                    {t.perMonth}
-                  </span>
-                </div>
-                <p
-                  className={`mb-8 text-body-md ${tier.featured ? 'text-white/70' : 'text-muted'}`}
-                >
-                  {tier.blurb}
-                </p>
-                <ul
-                  className={`mb-8 space-y-4 text-body-md ${tier.featured ? 'text-white' : 'text-ink'}`}
-                >
-                  {tier.features.map((feature) => (
-                    <li key={feature} className="flex items-center gap-3">
-                      <span
-                        className="material-symbols-outlined text-sm text-accent"
-                        aria-hidden="true"
-                      >
-                        check
-                      </span>
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <Link
-                href="/register"
-                className={`block w-full rounded-xl py-3 text-center font-title text-label-md ${
-                  tier.featured
-                    ? 'bg-surface text-ink transition-all hover:bg-white/90'
-                    : tier.ctaStyle === 'secondary'
-                      ? BTN_SECONDARY
-                      : BTN_PRIMARY
-                } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
-              >
-                {tier.cta}
-              </Link>
-            </div>
+            <PricingTierCard key={tier.name} tier={tier} locale={locale} />
           ))}
         </div>
       </div>
     </section>
+  );
+}
+
+type PricingTier = ReturnType<typeof getDictionary>['pricing']['tiers'][number];
+
+export function PricingTierCard({
+  tier,
+  locale,
+  action,
+}: {
+  tier: PricingTier;
+  locale: Locale;
+  action?: React.ReactNode;
+}) {
+  const t = getDictionary(locale).pricing;
+  return (
+    <article
+      data-pricing-tier={tier.name.toLowerCase()}
+      className={
+        tier.featured
+          ? 'relative flex flex-col justify-between rounded-2xl bg-ink p-6 text-background shadow-lift sm:p-8'
+          : 'flex flex-col justify-between rounded-2xl border border-line bg-background p-6 sm:p-8'
+      }
+    >
+      {tier.featured && (
+        <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-accent px-3 py-1 text-label-sm font-semibold text-background">
+          {t.popular}
+        </div>
+      )}
+      <div>
+        <div
+          className={`mb-2 text-label-sm uppercase tracking-wider ${tier.featured ? 'text-background/70' : 'text-muted'}`}
+        >
+          {tier.name}
+        </div>
+        <div
+          className={`mb-4 font-display text-4xl ${tier.featured ? 'text-background' : 'text-ink'}`}
+        >
+          {tier.price}{' '}
+          <span
+            className={`font-body-md text-body-md ${tier.featured ? 'text-background/70' : 'text-muted'}`}
+          >
+            {t.perMonth}
+          </span>
+        </div>
+        <p className={`mb-8 text-body-md ${tier.featured ? 'text-background/70' : 'text-muted'}`}>
+          {tier.blurb}
+        </p>
+        <ul className={`mb-8 space-y-4 text-body-md ${tier.featured ? 'text-background' : 'text-ink'}`}>
+          {tier.features.map((feature) => (
+            <li key={feature} className="flex items-center gap-3">
+              <span className="material-symbols-outlined text-sm text-accent" aria-hidden="true">
+                check
+              </span>
+              {feature}
+            </li>
+          ))}
+        </ul>
+      </div>
+      {action ?? (
+        <AuthModalTrigger
+          mode="register"
+          className={`block w-full rounded-xl py-3 text-center font-title text-label-md ${
+            tier.featured
+              ? 'bg-surface text-ink transition-all hover:bg-[rgb(var(--tint-soft))]'
+              : tier.ctaStyle === 'secondary'
+                ? BTN_SECONDARY
+                : BTN_PRIMARY
+          } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
+        >
+          {tier.cta}
+        </AuthModalTrigger>
+      )}
+    </article>
   );
 }

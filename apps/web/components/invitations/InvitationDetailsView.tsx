@@ -3,6 +3,7 @@ import { ShareButton } from '@/components/ui/ShareButton';
 import Link from 'next/link';
 import React from 'react';
 import { formatEventDate } from '@/lib/events';
+import { aiStudioProjectHref } from '@/lib/ai-studio';
 import type { InvitationRecord } from '@/lib/invitations';
 
 export type InvitationDetailsState =
@@ -121,16 +122,10 @@ export function InvitationDetailsView({
               variant={isPublished ? 'secondary' : 'primary'}
             />
             <Link
-              href={`/dashboard/invitations/${invitation.id}/design`}
+              href={`/dashboard/invitations/${invitation.id}/guests`}
               className={`rounded-xl border border-line px-4 py-3 text-center text-label-md text-ink hover:border-muted sm:px-5 ${focusRing}`}
             >
-              Design
-            </Link>
-            <Link
-              href={`/dashboard/invitations/${invitation.id}/media`}
-              className={`rounded-xl border border-line px-4 py-3 text-center text-label-md text-ink hover:border-muted sm:px-5 ${focusRing}`}
-            >
-              Media
+              Guests
             </Link>
             <Link
               href={`/dashboard/invitations/${invitation.id}/analytics`}
@@ -145,10 +140,10 @@ export function InvitationDetailsView({
               Community
             </Link>
             <Link
-              href={`/dashboard/invitations/${invitation.id}/edit`}
+              href={aiStudioProjectHref(invitation.id)}
               className={`rounded-xl bg-primary px-4 py-3 text-center text-label-md text-white sm:px-5 ${focusRing}`}
             >
-              Edit
+              Open in AI Studio
             </Link>
             <button
               type="button"
@@ -201,12 +196,6 @@ export function InvitationDetailsView({
                     className={`inline-flex min-h-10 items-center rounded-xl bg-primary px-4 py-2 text-label-md text-white ${focusRing}`}
                   >
                     Open invitation
-                  </Link>
-                  <Link
-                    href={`/dashboard/invitations/${invitation.id}/editor`}
-                    className={`rounded-lg border border-line px-4 py-2 text-label-md text-ink ${focusRing}`}
-                  >
-                    Edit published design
                   </Link>
                 </div>
                 <div className="inline-flex rounded-xl border border-line bg-white p-2">

@@ -6,6 +6,7 @@ export type InvitationRecord = {
   slug: string;
   status: string;
   publishedAt: string | null;
+  publishedDesignVersion?: number | null;
   createdAt: string;
   updatedAt: string;
   hasDesign: boolean;

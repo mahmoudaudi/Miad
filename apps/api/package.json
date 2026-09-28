@@ -10,7 +10,8 @@
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --max-warnings=0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest --config ./test/jest-unit.json",
-    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand"
+    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
+    "credits:grant-free": "ts-node scripts/grant-free-credits.ts"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",

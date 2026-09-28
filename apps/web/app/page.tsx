@@ -5,7 +5,6 @@ import {
   Hero,
   HowItWorks,
   Pricing,
-  Transformation,
   TemplateShowcase,
   FeatureGrid,
   TrustStrip,
@@ -19,7 +18,7 @@ import {
 export default function HomePage() {
   const locale = 'en' as const;
   return (
-    <div className="w-full bg-background font-body-md text-ink">
+    <div className="miad-landing w-full bg-background font-body-md text-ink">
       {/* Without JavaScript the scroll-reveal stays hidden — reveal it. */}
       <noscript>
         <style>{`.reveal{opacity:1 !important;transform:none !important;}`}</style>
@@ -33,7 +32,6 @@ export default function HomePage() {
           <Hero locale={locale} />
           <HowItWorks locale={locale} />
           <TemplateShowcase locale={locale} />
-          <Transformation locale={locale} />
           <FeatureGrid locale={locale} />
           <TrustStrip locale={locale} />
           <Pricing locale={locale} />

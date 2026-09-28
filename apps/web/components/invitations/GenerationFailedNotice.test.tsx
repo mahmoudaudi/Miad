@@ -3,14 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { GenerationFailedNotice } from './GenerationFailedNotice';
 
-const editorHref = '/dashboard/invitations/invitation-1/editor';
+const studioHref = '/dashboard/invitations/new?invitationId=invitation-1';
 
 describe('GenerationFailedNotice', () => {
-  it('states the invitation was created and offers retry plus manual editor', () => {
+  it('states the invitation was created and offers retry plus AI Studio recovery', () => {
     const html = renderToStaticMarkup(
       <GenerationFailedNotice
         message="AI generation is not configured."
-        editorHref={editorHref}
+        studioHref={studioHref}
         generating={false}
         onRetry={() => undefined}
       />
@@ -20,8 +20,8 @@ describe('GenerationFailedNotice', () => {
     expect(html).not.toContain('could not create');
     expect(html).toContain('AI generation is not configured.');
     expect(html).toContain('Retry AI generation');
-    expect(html).toContain(`href="${editorHref}"`);
-    expect(html).toContain('Open editor');
+    expect(html).toContain(`href="${studioHref}"`);
+    expect(html).toContain('Continue in AI Studio');
     expect(html).not.toContain('disabled=""');
     expect(html).not.toContain('Generating…');
   });
@@ -30,15 +30,14 @@ describe('GenerationFailedNotice', () => {
     const html = renderToStaticMarkup(
       <GenerationFailedNotice
         message="AI generation timed out. Please try again."
-        editorHref={editorHref}
+        studioHref={studioHref}
         generating={true}
         onRetry={() => undefined}
       />
     );
     expect(html).toContain('Generating…');
     expect(html).toContain('disabled');
-    // The manual path stays available even while AI is busy.
-    expect(html).toContain(`href="${editorHref}"`);
+    expect(html).toContain(`href="${studioHref}"`);
   });
 
   it('invokes retry without navigating away', () => {
@@ -46,27 +45,27 @@ describe('GenerationFailedNotice', () => {
     const html = renderToStaticMarkup(
       <GenerationFailedNotice
         message="AI generation failed. Please try again."
-        editorHref={editorHref}
+        studioHref={studioHref}
         generating={false}
         onRetry={onRetry}
       />
     );
     // Static render cannot click; assert the handler is wired by rendering
-    // the interactive elements (no auto-navigation, editor is a plain link).
+    // the interactive elements without automatically navigating away.
     expect(onRetry).not.toHaveBeenCalled();
     expect(html).toContain('<button');
-    expect(html).toContain('Open editor');
+    expect(html).toContain('Continue in AI Studio');
   });
 
-  it('omits the retry action when none is provided and keeps manual recovery', () => {
+  it('omits retry when unavailable and keeps a route back to AI Studio', () => {
     const html = renderToStaticMarkup(
-      <GenerationFailedNotice message="AI generation failed." editorHref={editorHref} />
+      <GenerationFailedNotice message="AI generation failed." studioHref={studioHref} />
     );
     expect(html).toContain('Your invitation was created');
     expect(html).toContain('AI generation failed.');
     expect(html).not.toContain('Retry AI generation');
     expect(html).not.toContain('<button');
-    expect(html).toContain(`href="${editorHref}"`);
-    expect(html).toContain('Open editor');
+    expect(html).toContain(`href="${studioHref}"`);
+    expect(html).toContain('Continue in AI Studio');
   });
 });

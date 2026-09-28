@@ -13,7 +13,6 @@ const profile: StudioProfile = { name: 'Maya Haddad', email: 'm@example.com', in
 const render = () =>
   renderToStaticMarkup(
     <StudioSidebar
-      manualHref="/dashboard/events/new"
       profile={profile}
       onLogout={() => undefined}
     />
@@ -31,7 +30,7 @@ describe('StudioSidebar collapse', () => {
     // variants draw a panel outline and read ambiguously as in/out. These two
     // are a bare directional arrow, so the direction is unmistakable.
     expect(html).toContain('keyboard_double_arrow_left');
-    expect(html).toContain('>New<');
+    expect(html).toContain('>Create with AI<');
     expect(html).toContain('>AI Studio<');
     expect(html).toContain('>Billing<');
     expect(html).toContain('miad-logo.png');
@@ -148,8 +147,6 @@ describe('StudioSidebar collapse', () => {
       '/dashboard/invitations/new',
       '/dashboard/invitations',
       '/dashboard/community/browse',
-      '/dashboard/community',
-      '/dashboard/events',
       '/dashboard/billing',
     ]) {
       expect(html).toContain(`href="${href}"`);

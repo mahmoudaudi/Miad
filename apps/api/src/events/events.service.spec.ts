@@ -129,7 +129,7 @@ describe('EventsService', () => {
       event: {
         findFirst: async () => ({
           id: record.id,
-          invitation: { id: 'inv-1', media: [{ fileUrl: 'bucket/key' }] },
+          invitation: { id: 'inv-1', images: [{ fileUrl: 'bucket/key' }] },
         }),
         deleteMany: async () => ({ count: 1 }),
       },

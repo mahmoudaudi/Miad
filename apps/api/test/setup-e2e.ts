@@ -3,16 +3,16 @@
  * Provides the required env so Joi config validation passes at module load.
  * Test-only dummy values; never real secrets.
  *
- * Also loads the local (git-ignored) `.env` without overriding the real
+ * Also loads the root (git-ignored) `.env` without overriding the real
  * process environment, so optional Feature 9 storage credentials
  * (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY) are visible to specs.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { resolve } from 'node:path';
 
 function loadLocalEnv(): void {
   try {
-    const raw = readFileSync(join(__dirname, '..', '.env'), 'utf8');
+    const raw = readFileSync(resolve(__dirname, '../../.env'), 'utf8');
     for (const line of raw.split(/\r?\n/)) {
       const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
       if (!match) continue;
@@ -23,7 +23,7 @@ function loadLocalEnv(): void {
       }
     }
   } catch {
-    // No local .env — optional storage tests will skip.
+    // No root .env — optional storage tests will skip.
   }
 }
 

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import type { Locale } from '@/lib/i18n/locales';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
+import { ToastProvider } from '@/components/ui/ToastProvider';
 import { AuthModal } from './AuthModal';
 import { FinalCta } from './FinalCta';
 import { Footer } from './Footer';
@@ -11,11 +12,6 @@ import { Hero } from './Hero';
 import { HeaderView, NAV_LINK_DEFS } from './Header';
 import { HowItWorks } from './HowItWorks';
 import { Pricing } from './Pricing';
-import {
-  GENERATE_INVITE_ANONYMOUS_TARGET,
-  GENERATE_INVITE_AUTHENTICATED_TARGET,
-  resolveGenerateInviteTarget,
-} from './PromptBox';
 import { TemplateShowcaseHeader } from './TemplateShowcase';
 import { TemplateGrid } from './TemplateGrid';
 import { TemplateGridSkeleton } from './TemplateGridSkeleton';
@@ -48,6 +44,14 @@ const headerUser = {
   isActive: true,
 };
 
+function renderAuthModal(props: React.ComponentProps<typeof AuthModal>) {
+  return renderToStaticMarkup(
+    <ToastProvider>
+      <AuthModal {...props} />
+    </ToastProvider>
+  );
+}
+
 function renderHeader(
   locale: Locale,
   props: Partial<React.ComponentProps<typeof HeaderView>> = {}
@@ -62,7 +66,7 @@ function renderHeader(
         loggingOut={false}
         menuOpen={false}
         scrolled={false}
-        activeKey="howItWorks"
+        activeKey="templates"
         onMenuChange={noop}
         onAuthOpen={noop}
         onAuthRetry={noop}
@@ -81,36 +85,29 @@ describe('landing navigation data', () => {
       expect(link.href.startsWith('/') || link.href.startsWith('/#')).toBe(true);
     }
     expect(NAV_LINK_DEFS.map((link) => link.href)).toEqual([
-      '/#how-it-works',
       '/#templates',
+      '/#features-heading',
       '/#pricing',
     ]);
   });
 
   it('labels every navbar link in English', () => {
     const labels = NAV_LINK_DEFS.map((link) => getDictionary('en').nav[link.key]);
-    expect(labels.every((label) => label.length > 0)).toBe(true);
+    expect(labels).toEqual(['Templates', 'Features', 'Enterprise']);
   });
 
-  it('routes Generate Invite into the real product flow', () => {
-    expect(resolveGenerateInviteTarget({ firstName: 'Nadia' } as never)).toBe(
-      GENERATE_INVITE_AUTHENTICATED_TARGET
-    );
-    expect(GENERATE_INVITE_AUTHENTICATED_TARGET).toBe('/dashboard/invitations/new');
-    expect(resolveGenerateInviteTarget(null)).toBe(GENERATE_INVITE_ANONYMOUS_TARGET);
-    expect(GENERATE_INVITE_ANONYMOUS_TARGET).toBe('/register');
-  });
 });
 
 describe('landing navbar', () => {
   it('renders desktop navigation, logo, and anonymous actions (English-only)', () => {
     const html = renderHeader('en');
     expect(html).toContain('aria-label="Miad home"');
-    expect(html).toContain('/#how-it-works');
     expect(html).toContain('/#templates');
+    expect(html).toContain('/#features-heading');
     expect(html).toContain('/#pricing');
-    expect(html).toContain('Create Invitation');
+    expect(html).not.toContain('Create Invitation');
     expect(html).toContain('Log in');
+    expect(html).toContain('Sign up');
     expect(html).toContain('Miad');
     expect(html).not.toContain('aria-label="Language"');
     expect(html).not.toContain('href="#"');
@@ -122,7 +119,10 @@ describe('landing navbar', () => {
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('aria-label="Close menu"');
     expect(html).toContain('Mobile navigation');
+    expect(html).toContain('/#features-heading');
     expect(html).toContain('/#pricing');
+    expect(html).toContain('Sign up');
+    expect(html).toContain('miad-nav-menu-enter');
   });
 
   it('keeps the mobile menu closed when requested', () => {
@@ -133,9 +133,9 @@ describe('landing navbar', () => {
 
   it('renders authenticated actions without extra auth prompts', () => {
     const html = renderHeader('en', { authStatus: 'authenticated', user: headerUser });
-    expect(html).toContain('/dashboard/invitations/new');
     expect(html).toContain('Account: Nadia Host');
     expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('href="/dashboard/invitations/new"');
     expect(html).not.toContain('Welcome back');
   });
 
@@ -145,36 +145,52 @@ describe('landing navbar', () => {
     expect(ltr).toContain('aria-current="page"');
     expect(ltr).toContain('Templates');
 
-    const pricing = renderHeader('en', { activeKey: 'pricing', menuOpen: true });
-    expect(pricing).toContain('dir="ltr"');
-    expect(pricing).toContain('Pricing');
-    expect(pricing).not.toContain('dir="rtl"');
-    expect(pricing).not.toContain('الأسعار');
+    const features = renderHeader('en', { activeKey: 'features', menuOpen: true });
+    expect(features).toContain('dir="ltr"');
+    expect(features).toContain('Features');
+    expect(features).toContain('aria-current="page"');
+    expect(features).not.toContain('dir="rtl"');
+
+    const enterprise = renderHeader('en', { activeKey: 'enterprise' });
+    expect(enterprise).toContain('Enterprise');
+    expect(enterprise).toContain('aria-current="page"');
   });
 });
 
 describe('landing auth modal', () => {
   it('shows the Miad logo with the correct mode title and Google entry point', () => {
     for (const mode of ['login', 'register'] as const) {
-      const html = renderToStaticMarkup(
-        <AuthModal mode={mode} locale="en" onModeChange={noop} onClose={noop} onSuccess={noop} />
-      );
+      const html = renderAuthModal({
+        mode,
+        locale: 'en',
+        onModeChange: noop,
+        onClose: noop,
+        onSuccess: noop,
+      });
       expect(html).toContain('%2Fmiad-logo.png');
       expect(html).toContain('role="dialog"');
       expect(html).toMatch(/Google/i);
       expect(html).not.toMatch(/oauth|recaptcha|captcha|privacy|terms/i);
       expect(html).not.toContain('href="#"');
     }
-    const loginEn = renderToStaticMarkup(
-      <AuthModal mode="login" locale="en" onModeChange={noop} onClose={noop} onSuccess={noop} />
-    );
+    const loginEn = renderAuthModal({
+      mode: 'login',
+      locale: 'en',
+      onModeChange: noop,
+      onClose: noop,
+      onSuccess: noop,
+    });
     expect(loginEn).toContain('Welcome back');
   });
 
   it('offers both modes with accessible switching', () => {
-    const html = renderToStaticMarkup(
-      <AuthModal mode="login" locale="en" onModeChange={noop} onClose={noop} onSuccess={noop} />
-    );
+    const html = renderAuthModal({
+      mode: 'login',
+      locale: 'en',
+      onModeChange: noop,
+      onClose: noop,
+      onSuccess: noop,
+    });
     expect(html).toContain('Log in');
     expect(html).toContain('Sign up');
     expect(html).toContain('aria-pressed');
@@ -183,16 +199,14 @@ describe('landing auth modal', () => {
 
   it('shows the saved-prompt confirmation above account creation', () => {
     const notice = 'We saved your prompt! Create an account to start building.';
-    const html = renderToStaticMarkup(
-      <AuthModal
-        mode="register"
-        locale="en"
-        notice={notice}
-        onModeChange={noop}
-        onClose={noop}
-        onSuccess={noop}
-      />
-    );
+    const html = renderAuthModal({
+      mode: 'register',
+      locale: 'en',
+      notice,
+      onModeChange: noop,
+      onClose: noop,
+      onSuccess: noop,
+    });
     expect(html).toContain(notice);
     expect(html).toContain('role="status"');
     expect(html.indexOf(notice)).toBeLessThan(html.indexOf('Create your account'));
@@ -210,11 +224,11 @@ describe('landing footer', () => {
     }
     const html = renderToStaticMarkup(<Footer locale="en" />);
     const links = hrefs(html);
-    expect(links).toContain('/login');
-    expect(links).toContain('/register');
     expect(links).toContain('/dashboard/invitations/new');
     expect(links).toContain('/#templates');
     expect(links).toContain('/#pricing');
+    expect(html).toContain('data-auth-mode="login"');
+    expect(html).toContain('data-auth-mode="register"');
   });
 
   it('renders headings without fake social or legal links', () => {
@@ -230,10 +244,7 @@ describe('landing pricing', () => {
   it('sends every CTA to account creation with no dead buttons', () => {
     const html = renderToStaticMarkup(<Pricing locale="en" />);
     expect(html).not.toContain('href="#"');
-    expect(html).not.toContain('<button');
-    const links = hrefs(html);
-    expect(links).toHaveLength(3);
-    expect(links.every((href) => href === '/register')).toBe(true);
+    expect(html.match(/data-auth-mode="register"/g)).toHaveLength(3);
     expect(html).toContain('id="pricing"');
   });
 });
@@ -360,7 +371,7 @@ describe('landing template showcase', () => {
       />
     );
     expect(card).toContain('Romantic Blush');
-    expect(card).toContain('/register');
+    expect(card).toContain('data-auth-mode="register"');
   });
 
   it('anchors the workflow section for navbar navigation', () => {
@@ -382,8 +393,7 @@ describe('landing honesty', () => {
 
   it('closes with a real signup CTA', () => {
     const html = renderToStaticMarkup(<FinalCta locale="en" />);
-    expect(html).not.toContain('<button');
-    expect(hrefs(html)).toEqual(['/register']);
+    expect(html).toContain('data-auth-mode="register"');
     expect(html).toContain('Your invitation starts with an idea.');
   });
 
@@ -394,11 +404,13 @@ describe('landing honesty', () => {
     expect(html).toContain('Your website');
   });
 
-  it('renders expected pricing markup', () => {
+  it('renders the pricing auth actions without dead links', () => {
     const countTags = (html: string, tag: string) =>
       html.match(new RegExp(`<${tag}[ >]`, 'g'))?.length ?? 0;
     const html = renderToStaticMarkup(<Pricing locale="en" />);
-    expect(countTags(html, 'a')).toBe(3);
+    expect(countTags(html, 'a')).toBe(0);
+    expect(countTags(html, 'button')).toBe(3);
+    expect(html.match(/data-auth-mode="register"/g)).toHaveLength(3);
   });
 });
 

@@ -85,10 +85,10 @@ export function EditInvitationClient({ invitationId }: { invitationId: string })
           This invitation is unavailable or may have been removed.
         </p>
         <Link
-          href="/dashboard/events"
+          href="/dashboard/invitations"
           className="mt-7 inline-flex rounded-xl bg-primary px-5 py-3 text-label-md text-white"
         >
-          Back to Events
+          Back to Invitations
         </Link>
       </main>
     );

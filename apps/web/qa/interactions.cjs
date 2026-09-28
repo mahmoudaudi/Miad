@@ -35,7 +35,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
   const page = await ctx.newPage();
   const checked = [];
   await page.goto(base + '/dashboard');
-  await page.getByRole('heading', { name: 'What will you create, Maya?' }).waitFor();
+  await page.getByRole('heading', { name: 'Maya, what are we working on today?' }).waitFor();
   const menu = page.getByRole('button', { name: 'Open menu', exact: true });
   await menu.click();
   const dialog = page.getByRole('dialog');
@@ -77,13 +77,33 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.getByRole('button', { name: 'Unpublish', exact: true }).waitFor();
   checked.push('publish: rapid click, failure, retry, rolling success, unpublish available');
   await page.getByRole('button', { name: 'Share invitation' }).click();
-  await page.getByRole('button', { name: /^(Copy link|Link copied)$/ }).click();
-  await page.getByRole('button', { name: 'Link copied' }).waitFor();
+  const shareDialog = page.getByRole('dialog', { name: 'Share invitation' });
+  await shareDialog.waitFor();
+  for (const [name, expected] of [
+    ['WhatsApp', 'https://wa.me/'],
+    ['Facebook', 'facebook.com/sharer/sharer.php'],
+    ['X / Twitter', 'twitter.com/intent/tweet'],
+    ['Telegram', 't.me/share/url'],
+    ['Email', 'mailto:'],
+  ]) {
+    const href = await shareDialog.getByRole('link', { name: new RegExp(name) }).getAttribute('href');
+    assert(href.startsWith(expected), `${name} share fallback missing`);
+  }
+  await shareDialog.getByRole('button', { name: /Instagram/ }).click();
+  await shareDialog.getByRole('link', { name: 'Open Instagram' }).waitFor();
+  assert(
+    (await page.evaluate(() => navigator.clipboard.readText())).includes('/invite/garden-evening'),
+    'Instagram did not copy the invitation URL'
+  );
+  checked.push('share: WhatsApp, Facebook, X, Telegram, Email URLs and Instagram copy/open fallback');
+  await shareDialog.getByRole('button', { name: /Copy link/ }).click();
+  await shareDialog.getByRole('status').getByText('Invitation link copied to your clipboard.').waitFor();
   assert(
     (await page.evaluate(() => navigator.clipboard.readText())).includes('/invite/garden-evening'),
     'Clipboard wrong URL'
   );
   await page.keyboard.press('Escape');
+  await shareDialog.waitFor({ state: 'detached' });
   assert(
     await page
       .getByRole('button', { name: 'Share invitation' })
@@ -97,8 +117,9 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
     })
   );
   await page.getByRole('button', { name: 'Share invitation' }).click();
-  await page.getByRole('button', { name: /^(Copy link|Link copied)$/ }).click();
-  await page.getByText('Copy failed.', { exact: false }).waitFor();
+  const failedShareDialog = page.getByRole('dialog', { name: 'Share invitation' });
+  await failedShareDialog.getByRole('button', { name: /Copy link/ }).click();
+  await failedShareDialog.getByRole('status').getByText('Copy failed.', { exact: false }).waitFor();
   await page.keyboard.press('Escape');
   checked.push('share: clipboard success and denial, Escape, restoration');
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
@@ -124,24 +145,9 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
   checked.push('delete: confirmation, rapid click guard, async failure, cancellation, success');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(base + '/dashboard/invitations/qa-invitation/editor');
-  await page.getByRole('heading', { name: 'Shape the invitation' }).waitFor();
-  await page.getByRole('button', { name: 'Preview invitation', exact: true }).click();
-  assert(await page.getByRole('heading', { name: 'Live preview' }).isVisible(), 'Preview hidden');
-  await page.getByRole('button', { name: 'Edit invitation', exact: true }).click();
-  await page
-    .locator('summary')
-    .filter({ hasText: /^Theme$/ })
-    .click();
-  await page.getByLabel('Base theme').selectOption('romantic-blush');
-  await page.getByLabel('Title', { exact: true }).fill('A personal invitation');
-  await page.getByRole('button', { name: 'Save changes' }).click();
-  await page.getByLabel('Title', { exact: true }).fill('Newer edit during save');
-  await delay(700);
-  assert(
-    (await page.getByLabel('Title', { exact: true }).inputValue()) === 'Newer edit during save',
-    'Save overwrote a newer edit'
-  );
-  checked.push('mobile editor: panels, accordion, theme, text, save without losing newer edits');
+  await page.waitForURL('**/dashboard/invitations/new?invitationId=qa-invitation');
+  await page.getByRole('heading', { name: 'AI studio', exact: true }).waitFor();
+  checked.push('legacy editor route opens the saved invitation in AI Studio');
   await page.goto(base + '/dashboard/invitations/new');
   const prompt = page.getByLabel('Describe your event', { exact: true });
   await prompt.fill('A garden dinner for Maya and friends');
@@ -153,7 +159,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
   );
   assert(counts['POST /ai-studio/generate'] === 1, 'Duplicate AI create');
   await page.getByRole('button', { name: 'Retry AI generation' }).click();
-  await page.getByRole('link', { name: 'Open editor', exact: true }).waitFor();
+  await page.getByRole('link', { name: 'Continue in AI Studio', exact: true }).waitFor();
   assert(counts['POST /ai-studio/generate'] === 1, 'AI retry created duplicate invitation');
   checked.push('AI: rapid click, preserved prompt, existing invitation retry and success');
   await page.goto(base + '/dashboard/events/qa-event/guests/new');
@@ -180,7 +186,6 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
     '/dashboard/events/qa-event/guests',
     '/dashboard/events/qa-event/guests/new',
     '/dashboard/notifications',
-    '/dashboard/invitations/qa-invitation/media',
   ]) {
     await page.goto(base + route);
     await page.locator('main h1').first().waitFor();

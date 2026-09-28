@@ -26,6 +26,9 @@ export type InvitationAiGenerateInput = {
   prompt: string;
   event: InvitationAiEventContext;
   currentDesign: InvitationDesignSpecification | null;
+  /** Runs the existing design validator inside the routed attempt for failover. */
+  validateSpecification?: (specification: unknown) => void;
+  modelPreference?: 'auto' | string;
 };
 
 export type InvitationHtmlAiGenerateInput = {
@@ -38,6 +41,7 @@ export type InvitationHtmlAiGenerateInput = {
    * as a provider failure and never persists a design.
    */
   signal?: AbortSignal;
+  modelPreference?: 'auto' | string;
 };
 
 /**
@@ -93,18 +97,27 @@ export type InvitationAiAnalysisRequest = {
   /** The question most recently asked, so the AI does not repeat it. */
   lastQuestionId?: string;
   signal?: AbortSignal;
+  modelPreference?: 'auto' | string;
 };
 
 export interface InvitationAiProvider {
   generateDesign(input: InvitationAiGenerateInput): Promise<InvitationAiResult>;
   generateHtml(input: InvitationHtmlAiGenerateInput): Promise<InvitationHtmlAiResult>;
   refineHtml(input: {
+    /** Diagnostic-only project identity; never included in the model prompt. */
+    invitationId?: string;
     prompt: string;
     event: InvitationAiEventContext;
     project: GeneratedWebsiteProject;
     signal?: AbortSignal;
+    modelPreference?: 'auto' | string;
+    onProgress?: InvitationHtmlAiGenerateInput['onProgress'];
+    validateArtifact?: (artifact: Omit<HtmlArtifactEnvelope, 'format' | 'version'>) => void;
   }): Promise<InvitationHtmlAiResult>;
-  extractEventDetails(prompt: string): Promise<InvitationAiEventDetails>;
+  extractEventDetails(
+    prompt: string,
+    modelPreference?: 'auto' | string
+  ): Promise<InvitationAiEventDetails>;
   /** Returns the raw model analysis; the caller validates it strictly. */
   analyzeDetails(input: InvitationAiAnalysisRequest): Promise<unknown>;
 }
@@ -112,8 +125,10 @@ export interface InvitationAiProvider {
 export class InvitationAiProviderError extends Error {
   constructor(
     message: string,
-    readonly status: 'configuration' | 'timeout' | 'provider' | 'invalid-output',
-    readonly cause?: unknown
+    readonly status: 'configuration' | 'timeout' | 'provider' | 'invalid-output' | 'input',
+    readonly cause?: unknown,
+    readonly httpStatus?: number | null,
+    readonly retryable = false
   ) {
     super(message);
   }

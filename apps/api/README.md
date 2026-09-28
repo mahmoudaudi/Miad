@@ -34,7 +34,7 @@ role through `JwtAuthGuard` + `RolesGuard`. Seed roles first with
 ## AI website generation
 
 AI Studio uses the NestJS API only; `apps/ai-service` is not part of this path.
-Set these server-side variables in `apps/api/.env` (never in the web app):
+Set these server-side variables in the root `.env` (never expose them to the web app):
 
 ```dotenv
 OPENROUTER_API_KEY=

@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { InvitationsService } from './invitations.service';
 
 const record = {
@@ -7,6 +11,7 @@ const record = {
   slug: 'garden-dinner',
   status: 'DRAFT',
   publishedAt: null,
+  publishedDesignVersion: 1,
   createdAt: new Date('2026-09-20T00:00:00.000Z'),
   updatedAt: new Date('2026-09-20T00:00:00.000Z'),
   event: {
@@ -37,8 +42,31 @@ describe('InvitationsService', () => {
       where: { event: { userId: 'owner-1' }, eventId: record.eventId },
       select: { designs: { where: { isActive: true }, select: { id: true } } },
     });
-    expect(result[0]).toMatchObject({ slug: 'garden-dinner', status: 'DRAFT', hasDesign: true });
+    expect(result[0]).toMatchObject({
+      slug: 'garden-dinner',
+      status: 'DRAFT',
+      hasDesign: true,
+      publishedDesignVersion: 1,
+    });
     expect(result[0]?.event).not.toHaveProperty('userId');
+  });
+
+  it('only returns projects belonging to the authenticated owner', async () => {
+    const owners = new Map([[record.id, 'owner-1']]);
+    const queries: unknown[] = [];
+    const prisma = {
+      invitation: {
+        findMany: async (args: { where: { event: { userId: string } } }) => {
+          queries.push(args.where);
+          return owners.get(record.id) === args.where.event.userId ? [record] : [];
+        },
+      },
+    };
+    const service = new InvitationsService(prisma as never, validDesigns as never);
+
+    await expect(service.findAll('owner-1')).resolves.toHaveLength(1);
+    await expect(service.findAll('owner-2')).resolves.toHaveLength(0);
+    expect(queries).toEqual([{ event: { userId: 'owner-1' } }, { event: { userId: 'owner-2' } }]);
   });
 
   it('checks event ownership before creating a draft invitation', async () => {
@@ -109,7 +137,12 @@ describe('InvitationsService', () => {
           currentStatus = data.status;
           currentPublishedAt = data.publishedAt;
           currentPublishedDesignVersion = data.publishedDesignVersion;
-          return { ...record, status: data.status, publishedAt: data.publishedAt };
+          return {
+            ...record,
+            status: data.status,
+            publishedAt: data.publishedAt,
+            publishedDesignVersion: data.publishedDesignVersion,
+          };
         },
       },
     };
@@ -199,27 +232,32 @@ describe('InvitationsService', () => {
       whereClauses.push([label, args.where]);
       return { count: 1 };
     };
+    const tx = {
+      invitation: {
+        delete: async (args: { where: unknown }) => {
+          whereClauses.push(['invitation.delete', args.where]);
+          return record;
+        },
+      },
+      communityDesign: { deleteMany: track('communityDesign.deleteMany') },
+      rsvp: { deleteMany: track('rsvp.deleteMany') },
+      guest: { deleteMany: track('guest.deleteMany') },
+      invitationImage: { deleteMany: track('invitationImage.deleteMany') },
+      aiUsage: { deleteMany: track('aiUsage.deleteMany') },
+      invitationView: { deleteMany: track('invitationView.deleteMany') },
+      invitationDesign: { deleteMany: track('invitationDesign.deleteMany') },
+    };
     const prisma = {
       invitation: {
         updateMany: async (args: { where: unknown }) => {
           whereClauses.push(['invitation.updateMany', args.where]);
           return { count: 1 };
         },
-        findFirst: async () => ({ ...record, slug: 'updated-slug', media: [] }),
-        delete: async (args: { where: unknown }) => {
-          whereClauses.push(['invitation.delete', args.where]);
-          return record;
-        },
+        findFirst: async () => ({ ...record, slug: 'updated-slug', images: [] }),
       },
-      rsvp: { deleteMany: track('rsvp.deleteMany') },
-      guest: { deleteMany: track('guest.deleteMany') },
-      mediaAsset: { deleteMany: track('mediaAsset.deleteMany') },
-      aiUsage: { deleteMany: track('aiUsage.deleteMany') },
-      invitationView: { deleteMany: track('invitationView.deleteMany') },
-      invitationDesign: { deleteMany: track('invitationDesign.deleteMany') },
-      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+      $transaction: async (callback: (client: typeof tx) => Promise<void>) => callback(tx),
     };
-    const storage = { removeObject: async (key: unknown) => void removedObjects.push(key) };
+    const storage = { removeObjects: async (keys: unknown) => void removedObjects.push(keys) };
     const service = new InvitationsService(
       prisma as never,
       validDesigns as never,
@@ -229,76 +267,106 @@ describe('InvitationsService', () => {
     await service.remove('owner-1', record.id);
     expect(whereClauses).toEqual([
       ['invitation.updateMany', { id: record.id, event: { userId: 'owner-1' } }],
+      ['communityDesign.deleteMany', { invitationId: record.id }],
       ['rsvp.deleteMany', { guest: { invitationId: record.id } }],
       ['guest.deleteMany', { invitationId: record.id }],
-      ['mediaAsset.deleteMany', { invitationId: record.id }],
+      ['invitationImage.deleteMany', { invitationId: record.id }],
       ['aiUsage.deleteMany', { invitationId: record.id }],
       ['invitationView.deleteMany', { invitationId: record.id }],
       ['invitationDesign.deleteMany', { invitationId: record.id }],
       ['invitation.delete', { id: record.id }],
     ]);
     expect(removedObjects).toEqual([]);
+    expect(JSON.stringify(whereClauses)).not.toContain('unrelated-invitation');
   });
 
-  it('removes stored media objects best-effort before deleting rows', async () => {
+  it('deletes all owned invitation storage objects as one scoped batch', async () => {
     const removed: unknown[] = [];
+    const emptyDelete = async () => ({ count: 0 });
+    const tx = {
+      communityDesign: { deleteMany: emptyDelete },
+      rsvp: { deleteMany: emptyDelete },
+      guest: { deleteMany: emptyDelete },
+      invitationImage: { deleteMany: async () => ({ count: 2 }) },
+      aiUsage: { deleteMany: emptyDelete },
+      invitationView: { deleteMany: emptyDelete },
+      invitationDesign: { deleteMany: emptyDelete },
+      invitation: { delete: async () => record },
+    };
     const prisma = {
       invitation: {
         findFirst: async () => ({
           id: record.id,
-          media: [{ fileUrl: 'invitation-media/owner-1/inv-1/good' }],
+          images: [
+            {
+              userId: 'owner-1',
+              fileUrl: `invitation-media/owner-1/${record.id}/good.jpg`,
+            },
+            { userId: 'owner-1', fileUrl: 'invitation-media/owner-1/pending/claimed.png' },
+          ],
         }),
-        delete: async () => record,
       },
-      rsvp: { deleteMany: async () => ({ count: 0 }) },
-      guest: { deleteMany: async () => ({ count: 0 }) },
-      mediaAsset: { deleteMany: async () => ({ count: 1 }) },
-      aiUsage: { deleteMany: async () => ({ count: 0 }) },
-      invitationView: { deleteMany: async () => ({ count: 0 }) },
-      invitationDesign: { deleteMany: async () => ({ count: 0 }) },
-      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+      $transaction: async (callback: (client: typeof tx) => Promise<void>) => callback(tx),
     };
     const storage = {
-      removeObject: async (key: unknown) => void removed.push(key),
+      removeObjects: async (keys: unknown) => void removed.push(keys),
     };
     await new InvitationsService(prisma as never, validDesigns as never, storage as never).remove(
       'owner-1',
       record.id
     );
-    expect(removed).toEqual(['owner-1/inv-1/good']);
+    expect(removed).toEqual([[`owner-1/${record.id}/good.jpg`, 'owner-1/pending/claimed.png']]);
   });
 
-  it('still deletes rows when storage cleanup fails', async () => {
-    let deleted = false;
-    const prisma = {
+  it('rolls back relational cleanup when storage cleanup fails', async () => {
+    let transactionCommitted = false;
+    let parentDeleteReached = false;
+    const emptyDelete = async () => ({ count: 1 });
+    const tx = {
+      communityDesign: { deleteMany: emptyDelete },
+      rsvp: { deleteMany: emptyDelete },
+      guest: { deleteMany: emptyDelete },
+      invitationImage: { deleteMany: emptyDelete },
+      aiUsage: { deleteMany: emptyDelete },
+      invitationView: { deleteMany: emptyDelete },
+      invitationDesign: { deleteMany: emptyDelete },
       invitation: {
-        findFirst: async () => ({
-          id: record.id,
-          media: [{ fileUrl: 'invitation-media/owner-1/inv-1/stale' }],
-        }),
         delete: async () => {
-          deleted = true;
+          parentDeleteReached = true;
           return record;
         },
       },
-      rsvp: { deleteMany: async () => ({ count: 0 }) },
-      guest: { deleteMany: async () => ({ count: 0 }) },
-      mediaAsset: { deleteMany: async () => ({ count: 1 }) },
-      aiUsage: { deleteMany: async () => ({ count: 1 }) },
-      invitationView: { deleteMany: async () => ({ count: 0 }) },
-      invitationDesign: { deleteMany: async () => ({ count: 1 }) },
-      $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    };
+    const prisma = {
+      invitation: {
+        findFirst: async () => ({
+          id: record.id,
+          images: [
+            {
+              userId: 'owner-1',
+              fileUrl: `invitation-media/owner-1/${record.id}/stale.jpg`,
+            },
+          ],
+        }),
+      },
+      $transaction: async (callback: (client: typeof tx) => Promise<void>) => {
+        await callback(tx);
+        transactionCommitted = true;
+      },
     };
     const storage = {
-      removeObject: async () => {
+      removeObjects: async () => {
         throw new Error('storage down');
       },
     };
-    await new InvitationsService(prisma as never, validDesigns as never, storage as never).remove(
-      'owner-1',
-      record.id
-    );
-    expect(deleted).toBe(true);
+    await expect(
+      new InvitationsService(prisma as never, validDesigns as never, storage as never).remove(
+        'owner-1',
+        record.id
+      )
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(transactionCommitted).toBe(false);
+    expect(parentDeleteReached).toBe(true);
   });
 
   it('returns not-found for a non-owned invitation without deleting anything', async () => {
@@ -309,9 +377,10 @@ describe('InvitationsService', () => {
     };
     const prisma = {
       invitation: { findFirst: async () => null, delete: write },
+      communityDesign: { deleteMany: write },
       rsvp: { deleteMany: write },
       guest: { deleteMany: write },
-      mediaAsset: { deleteMany: write },
+      invitationImage: { deleteMany: write },
       aiUsage: { deleteMany: write },
       invitationView: { deleteMany: write },
       invitationDesign: { deleteMany: write },

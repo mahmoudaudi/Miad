@@ -74,8 +74,8 @@ describe('InvitationDesignView', () => {
     });
     expect(saved).toContain('Current design: version 2');
     expect(saved).toContain('Saved: Romantic Blush');
-    expect(saved).toContain('/dashboard/invitations/invitation-1/editor');
-    expect(saved).toContain('Open editor');
+    expect(saved).toContain('/dashboard/invitations/new?invitationId=invitation-1');
+    expect(saved).toContain('Continue in AI Studio');
     expect(saved).toContain('Design saved.');
     expect(saved).toContain('Update design');
     expect(saved).toContain('disabled=""');
@@ -95,6 +95,6 @@ describe('InvitationDesignView', () => {
     expect(saving).toContain('role="alert"');
     const missing = render({ state: { status: 'not-found' } });
     expect(missing).toContain('Invitation not found');
-    expect(missing).toContain('/dashboard/events');
+    expect(missing).toContain('/dashboard/invitations');
   });
 });

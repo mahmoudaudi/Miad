@@ -129,6 +129,139 @@ textarea {
   animation: feedback-enter 180ms var(--motion-ease, ease-out) both;
 }
 
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-exit {
+  to {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.985);
+  }
+}
+
+@keyframes nav-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.miad-nav-menu-enter {
+  transform-origin: top center;
+  animation: nav-menu-enter 180ms var(--motion-ease, ease-out) both;
+}
+
+.miad-toast-region {
+  position: fixed;
+  z-index: 100;
+  inset-block-start: max(1rem, env(safe-area-inset-top));
+  inset-inline: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.625rem;
+  pointer-events: none;
+}
+
+.miad-toast {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 26rem;
+  margin-inline-start: auto;
+  padding: 0.875rem 0.875rem 0.875rem 1rem;
+  border: 1px solid rgb(228 222 216 / 0.9);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.97);
+  color: rgb(var(--foreground));
+  box-shadow: 0 12px 32px rgb(23 23 23 / 0.12);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  animation: toast-enter 200ms var(--motion-ease, ease-out) both;
+}
+
+.miad-toast--success .miad-toast__icon {
+  color: #287a52;
+}
+.miad-toast--error .miad-toast__icon {
+  color: rgb(var(--primary));
+}
+.miad-toast--exit {
+  animation: toast-exit 180ms ease-in both;
+}
+.miad-toast__icon {
+  flex: 0 0 auto;
+  font-size: 1.25rem;
+}
+.miad-toast__message {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+.miad-toast__close {
+  display: grid;
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 0.625rem;
+  color: rgb(var(--foreground) / 0.55);
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+.miad-toast__close:hover {
+  background: rgb(var(--foreground) / 0.06);
+  color: rgb(var(--foreground));
+}
+.miad-toast__close:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 2px;
+}
+.miad-toast__close .material-symbols-outlined {
+  font-size: 1.125rem;
+}
+
+@media (max-width: 639px) {
+  .miad-toast-region {
+    inset-inline: 0.75rem;
+  }
+  .miad-toast {
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .miad-toast,
+  .miad-toast--exit,
+  .miad-nav-menu-enter {
+    animation: none;
+  }
+  .miad-nav-motion,
+  .miad-nav-motion:hover,
+  .miad-nav-motion:active {
+    transition: none !important;
+    transform: none !important;
+  }
+  .miad-toast__close {
+    transition: none;
+  }
+}
+
 .font-inter {
   font-family: 'Inter', system-ui, sans-serif;
 }
@@ -167,6 +300,92 @@ textarea {
   --motion-fast: 160ms;
   --motion-normal: 240ms;
   --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Surface + text ramp. Light values are the historical literals, so the
+     default rendering is byte-for-byte what it was before theming. */
+  --primary-hover: 104 32 50;
+  --on-primary: 255 255 255;
+  --surface: 255 255 255;
+  --surface-muted: 246 243 239;
+  --ink: 23 23 23;
+  --muted: 104 100 97;
+  --accent: 128 105 77;
+  --ai: 112 77 121;
+  --success: 47 107 69;
+  --warning: 135 80 0;
+  --destructive: 186 26 26;
+  --error: 186 26 26;
+
+  /* Warm neutral tints used by alternating landing sections and cards. */
+  --section-alt: 248 246 242;
+  --tint-soft: 250 248 245;
+  --tint-chip: 240 232 227;
+  --tint-sand: 232 227 220;
+  --tint-blush: 240 227 220;
+  --tint-clay: 216 183 165;
+
+  /* Frosted navbar edge. Light keeps the original white/70 exactly. */
+  --nav-glass-border: 255 255 255;
+}
+
+/*
+ * Dark theme for the landing experience only. It is deliberately scoped to
+ * `.miad-landing` so the dashboard, admin, and auth surfaces keep their own
+ * palettes, and is activated by the `dark` class the theme toggle sets on
+ * <html>. Contrast is kept at or above the light-theme ratios:
+ * ink/muted on background, and white on the primary button.
+ */
+.dark {
+  color-scheme: dark;
+}
+
+.dark .miad-landing {
+  --background: 14 15 18;
+  --foreground: 236 237 240;
+  --primary: 244 138 160;
+  --primary-hover: 251 164 182;
+  --on-primary: 30 12 17;
+  --secondary: 38 30 36;
+  --border: 52 55 61;
+  --surface: 24 26 30;
+  --surface-muted: 31 33 38;
+  --ink: 236 237 240;
+  --muted: 156 160 168;
+  --accent: 217 179 143;
+  --ai: 199 168 207;
+  --success: 122 196 148;
+  --warning: 224 173 96;
+  --destructive: 255 138 138;
+  --error: 255 138 138;
+
+  /* Dark counterparts. Each is the same hue family as its light value, just
+     inverted in lightness, so the warm editorial feel survives. */
+  --section-alt: 20 22 26;
+  --tint-soft: 27 30 34;
+  --tint-chip: 38 42 47;
+  --tint-sand: 45 49 55;
+  --tint-blush: 48 36 41;
+  --tint-clay: 122 84 68;
+
+  /* A white/70 edge would glare on a dark panel, so dark uses a slate line. */
+  --nav-glass-border: 74 78 84;
+}
+
+/* Theme changes are a soft cross-fade rather than an instant jump. */
+.miad-landing,
+.miad-landing *,
+.miad-landing *::before,
+.miad-landing *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: var(--motion-normal);
+  transition-timing-function: var(--motion-ease);
+}
+
+/* Opt out of cross-fades where an element animates its own transform. */
+.miad-landing .miad-nav-motion,
+.miad-landing .miad-characters *,
+.miad-landing [data-shooting-star] {
+  transition-property: none;
 }
 
 @font-face {
@@ -240,7 +459,7 @@ textarea {
     opacity: 0.55;
   }
   .miad-button--primary {
-    @apply bg-primary text-white hover:bg-primary-hover;
+    @apply bg-primary text-primary-foreground hover:bg-primary-hover;
   }
   .miad-button--secondary {
     @apply border border-line bg-surface text-ink hover:border-accent;
@@ -249,7 +468,7 @@ textarea {
     @apply text-ink hover:bg-secondary;
   }
   .miad-button--destructive {
-    @apply bg-error text-white hover:bg-error/90;
+    @apply bg-error text-background hover:bg-error/90;
   }
   .miad-input {
     @apply w-full rounded-xl border border-line bg-surface px-3.5 py-3 text-body-md text-ink placeholder:text-muted;
@@ -534,6 +753,52 @@ textarea {
     #fdfdfd;
 }
 
+/* Keep non-studio dashboard pages on the AI Studio workspace palette. */
+.miad-studio-theme {
+  --background: 241 243 245;
+  --foreground: 32 36 42;
+  --primary: 159 18 57;
+  --secondary: 255 241 242;
+  --border: 215 219 224;
+  color-scheme: light;
+}
+
+.miad-studio-theme .font-display {
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.miad-studio-theme .text-ink {
+  color: #20242a;
+}
+
+.miad-studio-theme .text-muted {
+  color: #71717a;
+}
+
+.miad-studio-theme .text-accent {
+  color: #9f1239;
+}
+
+.miad-studio-theme .bg-accent {
+  background-color: #9f1239;
+}
+
+.miad-studio-theme .hover\:bg-primary-hover:hover {
+  background-color: #881337;
+}
+
+.miad-studio-theme .bg-ink {
+  background-color: #20242a;
+}
+
+.miad-studio-theme .border-accent {
+  border-color: #9f1239;
+}
+
+.miad-studio-theme .border-line {
+  border-color: #d7dbe0;
+}
+
 /* Decorative prompt caret; hidden from assistive technology by the markup. */
 .miad-caret {
   display: inline-block;
@@ -581,25 +846,6 @@ textarea {
 }
 
 /* Compact profile popover anchored to the workspace chrome. */
-/* Photo attach popover: floats above the composer, sized to the input card. */
-.miad-attach .miad-popover {
-  width: min(28rem, calc(100vw - 3rem));
-  border-radius: 0.75rem;
-  box-shadow: 0 12px 32px rgb(24 24 27 / 0.14);
-}
-/* The + becomes an x on its own axis when the panel is open: one icon, no swap. */
-.miad-attach-icon {
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-[data-open='true'] .miad-attach-icon {
-  transform: rotate(45deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .miad-attach-icon {
-    transition: none;
-  }
-}
-
 .miad-account-menu .miad-popover {
   width: 220px;
   padding: 0.25rem;
@@ -623,5 +869,17 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .miad-popover > * {
     animation: none;
+  }
+}
+
+/*
+ * Meteors are motion-only decoration. The global reduced-motion block stops the
+ * animation, but the elements would then sit frozen at full opacity as a field
+ * of dots, so hide them outright instead.
+ */
+@media (prefers-reduced-motion: reduce) {
+  [data-meteors] .animate-meteor-effect {
+    animation: none !important;
+    opacity: 0;
   }
 }

@@ -61,8 +61,8 @@ npm install
 
 ## Environment variables
 
-Copy `.env.example` → `.env`. Per-app templates: `apps/web/.env.example`,
-`apps/api/.env.example`, `apps/ai-service/.env.example`.
+Copy `.env.example` → `.env`. API, Web, Prisma, and the AI service all read
+configuration from this root file.
 
 | Variable                                   | Used by      | Notes                                                                               |
 | ------------------------------------------ | ------------ | ----------------------------------------------------------------------------------- |

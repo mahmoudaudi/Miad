@@ -77,7 +77,7 @@ Public invitation and RSVP endpoints:
 | POST   | `/api/v1/public/invitations/:slug/rsvp` | Record an anonymous RSVP for a published invite  |
 
 Public endpoints require no session and return `404` for draft/unpublished, invalid, or missing
-slugs. RSVP input accepts the existing `ATTENDING`, `PENDING`, and `NOT_ATTENDING` states, requires
-an email or phone, enforces status-specific attendee counts, and is rate-limited. It accepts no
-private resource IDs and returns only `{ status: "received" }`. A matching pre-added guest receives
-the RSVP; an existing response for the same contact is rejected with `409`.
+slugs. RSVP input accepts `ATTENDING` or `NOT_ATTENDING`, requires only a full name, and optionally
+accepts an attendee count and message. It is rate-limited, accepts no contact details or private
+resource IDs, and returns only `{ status: "received" }`. A single name-matched pre-added guest
+receives the RSVP while keeping any existing contact data; ambiguous name matches return `409`.

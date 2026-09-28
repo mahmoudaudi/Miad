@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { AuthModalTrigger } from './AuthModalTrigger';
 import React from 'react';
 import type { TemplateRecord } from '@/lib/templates';
 
@@ -424,10 +424,10 @@ export function TemplateCard(props: TemplateCardProps) {
   const { actionLabel } = props;
   const Preview = previews[preview];
   return (
-    <Link
-      href="/register"
+    <AuthModalTrigger
+      mode="register"
       aria-label={`${actionLabel}: ${label}`}
-      className="group min-w-0 overflow-hidden rounded-xl border border-line bg-surface shadow-subtle transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+      className="group block w-full min-w-0 overflow-hidden rounded-xl border border-line bg-surface text-start shadow-subtle transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
     >
       <div
         aria-hidden="true"
@@ -441,6 +441,6 @@ export function TemplateCard(props: TemplateCardProps) {
           arrow_outward
         </span>
       </div>
-    </Link>
+    </AuthModalTrigger>
   );
 }

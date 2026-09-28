@@ -1,9 +1,9 @@
 /**
- * Smart Question Flow — strict structured data types.
+ * Smart Question Flow — normalized types returned by the analysis parser.
  *
- * These are DATA shapes returned by the analysis model and validated by the
- * service. Question text and options are plain data only; the model can never
- * emit HTML or UI code here, and the service rejects anything malformed.
+ * Model output is data only. Common shape variations are normalized, unusable
+ * optional values are dropped, and the parser rejects responses the UI cannot
+ * safely render. Question text and options are never treated as markup.
  */
 
 export const SMART_QUESTION_TYPES = [
@@ -78,50 +78,84 @@ function cleanString(value: unknown, max: number): string | null {
   return trimmed.slice(0, max);
 }
 
-/** Validates a single option: non-empty label and value, sane lengths. */
-function parseOption(value: unknown): SmartQuestionOption | null {
-  if (!isPlainObject(value)) return null;
-  const label = cleanString(value.label, MAX_LABEL);
-  const rawValue = value.value === undefined ? value.label : value.value;
+/** Converts common option shapes into the small shape rendered by the UI. */
+function normalizeOption(value: unknown): SmartQuestionOption | null {
+  const source =
+    typeof value === 'string' ? { label: value, value } : isPlainObject(value) ? value : null;
+  if (!source) return null;
+  const label = cleanString(source.label ?? source.title ?? source.name, MAX_LABEL);
+  const rawValue = source.value ?? source.id ?? source.key ?? label;
   const optionValue = cleanString(rawValue, MAX_VALUE);
   if (!label || !optionValue) return null;
   return { label, value: optionValue };
 }
 
-/**
- * Validates one question. Returns null for anything malformed (bad type,
- * missing text, empty options on a select, non-string option entries), so the
- * service can reject the whole model response safely.
- */
-function parseQuestion(value: unknown): SmartQuestion | null {
-  if (!isPlainObject(value)) return null;
-  const id = cleanString(value.id, MAX_ID);
-  const text = cleanString(value.text, MAX_TEXT);
-  if (!id || !text) return null;
-  if (!/^[a-z0-9][a-z0-9-]*$/i.test(id)) return null;
-  if (!SMART_QUESTION_TYPES.includes(value.type as SmartQuestionType)) return null;
-  const type = value.type as SmartQuestionType;
+function normalizeQuestionType(value: unknown, hasOptions: boolean): SmartQuestionType | null {
+  if (value === undefined || value === null || value === '') {
+    return hasOptions ? 'single_select' : 'text';
+  }
+  if (typeof value !== 'string') return null;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  const aliases: Record<string, SmartQuestionType> = {
+    single_select: 'single_select',
+    select: 'single_select',
+    dropdown: 'single_select',
+    multi_select: 'multi_select',
+    multiselect: 'multi_select',
+    text: 'text',
+    free_text: 'text',
+    short_text: 'text',
+    date: 'date',
+    time: 'time',
+  };
+  return Object.prototype.hasOwnProperty.call(aliases, normalized)
+    ? (aliases[normalized] ?? null)
+    : null;
+}
 
-  const rawOptions = value.options;
+/** Normalizes common model variations, then validates what the UI needs. */
+function normalizeQuestion(value: unknown): SmartQuestion | null {
+  if (!isPlainObject(value)) return null;
+  const rawOptions = value.options ?? value.choices;
+  const hasOptions = Array.isArray(rawOptions) && rawOptions.length > 0;
+  const type = normalizeQuestionType(
+    value.type ?? value.questionType ?? value.inputType,
+    hasOptions
+  );
+  const text = cleanString(
+    value.text ?? value.prompt ?? value.questionText ?? value.label,
+    MAX_TEXT
+  );
+  if (!type || !text) return null;
+
+  const rawId = cleanString(value.id ?? value.questionId ?? value.key, MAX_ID);
+  const id =
+    (rawId ?? 'smart-question')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, MAX_ID) || 'smart-question';
+
   const options: SmartQuestionOption[] = [];
-  if (Array.isArray(rawOptions)) {
+  if ((type === 'single_select' || type === 'multi_select') && Array.isArray(rawOptions)) {
     for (const entry of rawOptions) {
       if (options.length >= MAX_OPTIONS) break;
-      const option = parseOption(entry);
-      if (option) options.push(option);
-      else return null; // a malformed option invalidates the question
+      const option = normalizeOption(entry);
+      if (option && !options.some((existing) => existing.value === option.value)) {
+        options.push(option);
+      }
     }
   }
-  // A select question must actually offer choices.
+  // A select question needs at least one usable choice for the UI to render.
   if ((type === 'single_select' || type === 'multi_select') && options.length === 0) {
     return null;
   }
-  // Free-form types must not ship options.
-  if ((type === 'text' || type === 'date' || type === 'time') && options.length > 0) {
-    return null;
-  }
+  const allowOtherValue = value.allowOther ?? value.allow_other;
   const allowOther =
-    (type === 'single_select' || type === 'multi_select') && value.allowOther !== false;
+    (type === 'single_select' || type === 'multi_select') && allowOtherValue === true;
   return { id, text, type, options, allowOther };
 }
 
@@ -149,7 +183,13 @@ function parseCollectedData(value: unknown): SmartCollectedData {
   return out;
 }
 
-const STATUS_VALUES = ['READY', 'QUESTION'] as const;
+const STATUS_ALIASES: Record<string, 'READY' | 'QUESTION'> = {
+  READY: 'READY',
+  COMPLETE: 'READY',
+  COMPLETED: 'READY',
+  QUESTION: 'QUESTION',
+  ASK: 'QUESTION',
+};
 
 /**
  * Reads the analysis status.
@@ -161,39 +201,41 @@ const STATUS_VALUES = ['READY', 'QUESTION'] as const;
  * status token is still rejected.
  */
 function readStatus(root: Record<string, unknown>): 'READY' | 'QUESTION' | null {
-  const direct = root.status;
+  const direct = root.status ?? root.state;
   if (typeof direct === 'string') {
     const value = direct.trim().toUpperCase();
-    if ((STATUS_VALUES as readonly string[]).includes(value)) {
-      return value as 'READY' | 'QUESTION';
-    }
+    return Object.prototype.hasOwnProperty.call(STATUS_ALIASES, value)
+      ? (STATUS_ALIASES[value] ?? null)
+      : null;
   }
   for (const key of Object.keys(root)) {
     if (!/^status/i.test(key)) continue;
     const glued = key.slice('status'.length).trim().toUpperCase();
-    if ((STATUS_VALUES as readonly string[]).includes(glued)) {
-      return glued as 'READY' | 'QUESTION';
+    if (Object.prototype.hasOwnProperty.call(STATUS_ALIASES, glued)) {
+      return STATUS_ALIASES[glued] ?? null;
     }
   }
   return null;
 }
 
 /**
- * Strictly validates a raw model analysis response.
- * Returns a normalized analysis, or null when the response is malformed.
- * The model can only influence the question DATA here; nothing is rendered
- * as HTML and any unexpected shape is rejected outright.
+ * Normalizes a parsed model analysis into the UI contract, returning null only
+ * when the decision or required question content cannot be safely recovered.
+ * Extra fields are ignored and all user-facing values remain bounded strings.
  */
 export function parseSmartAnalysis(value: unknown): SmartAnalysis | null {
   if (!isPlainObject(value)) return null;
   const status = readStatus(value);
   if (!status) return null;
-  const collectedData = parseCollectedData(value.collectedData);
+  const collectedData = parseCollectedData(value.collectedData ?? value.collected_data);
 
   if (status === 'READY') {
     return { status: 'READY', collectedData, question: null };
   }
-  const question = parseQuestion(value.question);
+  const rawQuestion = value.question ?? value.nextQuestion ?? value.next_question;
+  const question = normalizeQuestion(
+    typeof rawQuestion === 'string' ? { ...value, text: rawQuestion } : rawQuestion
+  );
   if (!question) return null;
   return { status: 'QUESTION', collectedData, question };
 }

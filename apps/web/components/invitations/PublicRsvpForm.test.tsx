@@ -10,7 +10,7 @@ describe('PublicRsvpFormView', () => {
     const html = renderToStaticMarkup(
       <PublicRsvpFormView
         values={emptyRsvpForm}
-        errors={{ email: 'Invalid email' }}
+        errors={{ name: 'Full name is required' }}
         submitting={true}
         submitted={false}
         serverError="Try again"
@@ -18,11 +18,15 @@ describe('PublicRsvpFormView', () => {
         onSubmit={noop}
       />
     );
-    expect(html).toContain('Accept');
-    expect(html).toContain('Maybe');
-    expect(html).toContain('Decline');
+    expect(html).toContain('Attendance');
+    expect(html).toContain('Yes');
+    expect(html).toContain('No');
+    expect(html).toContain('Full Name');
+    expect(html).toContain('Number of Guests');
+    expect(html).toContain('Message/Note');
+    expect(html).not.toMatch(/Email|Phone|Dietary|Address/);
     expect(html).toContain('Sending response…');
-    expect(html).toContain('Invalid email');
+    expect(html).toContain('Full name is required');
     expect(html).toContain('Try again');
   });
 

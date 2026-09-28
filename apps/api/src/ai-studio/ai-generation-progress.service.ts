@@ -8,12 +8,18 @@ export const AI_GENERATION_STAGES = [
   'PARSING_RESPONSE',
   'VALIDATING_WEBSITE',
   'SAVING_WEBSITE',
+  'REFINEMENT_UNDERSTANDING',
+  'REFINEMENT_INSPECTING',
+  'REFINEMENT_APPLYING',
+  'REFINEMENT_VALIDATING',
+  'REFINEMENT_SAVING',
   'COMPLETED',
 ] as const;
 
 export type AiGenerationStage = (typeof AI_GENERATION_STAGES)[number];
 export type AiGenerationProgress = {
   generationId: string;
+  operation?: 'generation' | 'refinement';
   stage: AiGenerationStage;
   status: 'ACTIVE' | 'COMPLETED' | 'FAILED';
   occurredAt: string;
@@ -23,6 +29,7 @@ export type AiGenerationProgress = {
 type ProgressRecord = {
   userId: string;
   stream: ReplaySubject<AiGenerationProgress>;
+  operation?: AiGenerationProgress['operation'];
   terminalAt?: number;
   last?: AiGenerationProgress;
 };
@@ -42,7 +49,12 @@ export class AiGenerationProgressService {
     return pending.stream.asObservable();
   }
 
-  begin(userId: string, generationId: string): void {
+  begin(
+    userId: string,
+    generationId: string,
+    operation: AiGenerationProgress['operation'] = 'generation'
+  ): void {
+    this.requireRecord(userId, generationId).operation = operation;
     this.emit(userId, generationId, 'REQUEST_RECEIVED', 'ACTIVE');
   }
 
@@ -74,6 +86,7 @@ export class AiGenerationProgressService {
     const record = this.requireRecord(userId, generationId);
     const progress: AiGenerationProgress = {
       generationId,
+      ...(record.operation ? { operation: record.operation } : {}),
       stage,
       status,
       occurredAt: new Date().toISOString(),

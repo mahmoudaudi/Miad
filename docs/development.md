@@ -1,6 +1,6 @@
 # Development workflow
 
-1. `cp .env.example .env` (and `apps/web/.env.local`, `apps/api/.env`, `apps/ai-service/.env` as needed)
+1. `cp .env.example .env` (all services use this root file)
 2. `npm install`
 3. Prepare PostgreSQL (native local install with an `event_invitation` database, or a Supabase project) and set `DATABASE_URL`
 4. Run services (separate terminals):

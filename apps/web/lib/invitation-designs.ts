@@ -331,14 +331,6 @@ export function defaultSections(
       order: 2,
       visible: true,
     },
-    {
-      id: 'rsvp',
-      type: 'rsvp',
-      title: 'RSVP',
-      body: 'Confirm attendance when ready.',
-      order: 3,
-      visible: true,
-    },
   ];
 }
 
@@ -471,20 +463,28 @@ export const saveInvitationEditor = (
 
 export const generateInvitationDesign = (
   invitationId: string,
-  input: { prompt: string; mode?: 'generate' | 'regenerate' }
+  input: { prompt: string; mode?: 'generate' | 'regenerate'; modelPreference?: 'auto' | string },
+  signal?: AbortSignal
 ) =>
   authenticatedApiClient<InvitationDesignRecord>(
     `/invitations/${invitationId}/design/ai/generate`,
     {
       method: 'POST',
       body: JSON.stringify(input),
+      ...(signal ? { signal } : {}),
     }
   );
 
-export const refineInvitationDesign = (invitationId: string, instruction: string) =>
+export const refineInvitationDesign = (
+  invitationId: string,
+  instruction: string,
+  modelPreference: 'auto' | string = 'auto',
+  signal?: AbortSignal
+) =>
   authenticatedApiClient<InvitationDesignRecord>(`/invitations/${invitationId}/design/ai/refine`, {
     method: 'POST',
-    body: JSON.stringify({ instruction }),
+    body: JSON.stringify({ instruction, modelPreference }),
+    ...(signal ? { signal } : {}),
   });
 
 export const refineHtmlInvitationDesign = (invitationId: string, instruction: string) =>

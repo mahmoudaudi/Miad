@@ -3,18 +3,18 @@ import React from 'react';
 
 /**
  * Non-fatal creation outcome: the invitation was persisted but AI design
- * generation failed. Offers the manual editor path — never a rollback.
+ * generation failed. Offers a route back to the saved project in AI Studio.
  * A retry action (`onRetry`) is only rendered when explicitly provided; the
  * AI Studio no longer offers regeneration and the user submits a new prompt.
  */
 export function GenerationFailedNotice({
   message,
-  editorHref,
+  studioHref,
   generating = false,
   onRetry,
 }: {
   message: string;
-  editorHref: string;
+  studioHref: string;
   generating?: boolean;
   onRetry?: () => void;
 }) {
@@ -46,10 +46,10 @@ export function GenerationFailedNotice({
           </button>
         )}
         <Link
-          href={editorHref}
+          href={studioHref}
           className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line bg-surface px-4 text-body-md font-medium text-ink transition-colors hover:border-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
-          Open editor
+          Continue in AI Studio
         </Link>
       </div>
     </div>

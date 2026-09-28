@@ -1,0 +1,76 @@
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgb(var(--ink) / 0.06);
+}
+
+/* One slow, low-contrast sheen. Deliberately gentle: a fast shimmer reads as
+   broken rather than loading, and this sits on a premium light surface. */
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(var(--ink) / 0.045),
+    transparent
+  );
+  animation: sheen 2.4s var(--motion-ease, ease) infinite;
+}
+
+@keyframes sheen {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+    content: none;
+  }
+}
+
+/* Blurred stand-in revealed until the real image reports it has decoded. */
+.imageFrame {
+  position: relative;
+  overflow: hidden;
+}
+
+.imagePlaceholder {
+  position: absolute;
+  inset: 0;
+  background: rgb(var(--ink) / 0.06);
+  filter: blur(10px);
+  transform: scale(1.08);
+  transition: opacity 320ms var(--motion-ease, ease);
+}
+
+.imageReady .imagePlaceholder {
+  opacity: 0;
+}
+
+.image {
+  opacity: 0;
+  transition: opacity 320ms var(--motion-ease, ease);
+}
+
+.imageReady .image {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imagePlaceholder,
+  .image {
+    transition: none;
+  }
+  .imagePlaceholder {
+    content: none;
+    display: none;
+  }
+  .image {
+    opacity: 1;
+  }
+}

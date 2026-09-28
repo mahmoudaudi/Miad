@@ -5,7 +5,7 @@ Implements the approved Database Structure: **16 tables** on Supabase PostgreSQL
 ## Tables
 
 `roles`, `users`, `events`, `invitations`, `invitation_designs`, `guests`,
-`rsvps`, `notifications`, `media_assets`, `ai_usage`, `invitation_views`,
+`rsvps`, `notifications`, `invitation_images`, `ai_usage`, `invitation_views`,
 `plans`, `features`, `plan_features`, `subscriptions`, `payments`.
 
 ## Files

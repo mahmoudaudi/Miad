@@ -38,10 +38,10 @@ export function GuestsListView({ eventId, state, successMessage, onRetry, onDele
   return (
     <main className="mx-auto max-w-[1100px] px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
       <Link
-        href={`/dashboard/events/${eventId}`}
+        href="/dashboard/invitations"
         className={`text-label-md text-muted hover:text-ink ${focusRing}`}
       >
-        ← Back to Event
+        ← Back to Invitations
       </Link>
       <div className="mt-8 flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
         <div>

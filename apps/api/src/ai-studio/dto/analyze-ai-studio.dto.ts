@@ -35,8 +35,8 @@ export class SmartAnswerDto {
     return null;
   })
   @IsOptional()
-  @IsString({ each: false })
-  @MaxLength(120, { each: false })
+  @IsString({ each: true })
+  @MaxLength(120, { each: true })
   value!: string | string[] | null;
 }
 
@@ -63,4 +63,9 @@ export class AnalyzeAiStudioDto {
   @IsString()
   @MaxLength(64)
   lastQuestionId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  modelPreference?: string;
 }

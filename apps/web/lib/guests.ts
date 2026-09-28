@@ -17,7 +17,14 @@ export type GuestRecord = {
   rsvp: RsvpRecord | null;
 };
 
-export type GuestInput = { name: string; email: string | null; phone: string | null };
+export type GuestInput = {
+  name: string;
+  email: string | null;
+  phone: string | null;
+  status?: RsvpRecord['status'];
+  partySize?: number;
+  notes?: string | null;
+};
 
 const base = (eventId: string) => `/events/${encodeURIComponent(eventId)}/guests`;
 
@@ -43,9 +50,32 @@ export const deleteGuest = (eventId: string, id: string) =>
     method: 'DELETE',
   });
 
+const invitationBase = (invitationId: string) =>
+  `/invitations/${encodeURIComponent(invitationId)}/guests`;
+
+export const listInvitationGuests = (invitationId: string) =>
+  authenticatedApiClient<GuestRecord[]>(invitationBase(invitationId));
+
+export const createInvitationGuest = (invitationId: string, input: GuestInput) =>
+  authenticatedApiClient<GuestRecord>(invitationBase(invitationId), {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+
+export const updateInvitationGuest = (invitationId: string, id: string, input: GuestInput) =>
+  authenticatedApiClient<GuestRecord>(`${invitationBase(invitationId)}/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+
+export const deleteInvitationGuest = (invitationId: string, id: string) =>
+  authenticatedApiClient<void>(`${invitationBase(invitationId)}/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+
 export function rsvpLabel(status: RsvpRecord['status'] | null): string {
   if (status === 'ATTENDING') return 'Attending';
-  if (status === 'PENDING') return 'Maybe';
+  if (status === 'PENDING') return 'Pending';
   if (status === 'NOT_ATTENDING') return 'Declined';
   return 'Awaiting response';
 }

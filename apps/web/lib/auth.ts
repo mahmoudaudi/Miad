@@ -1,4 +1,5 @@
 import { getApiUrl } from './env';
+import { clearPendingInvitationPrompt } from './pending-invitation-prompt';
 
 export type AuthUser = {
   id: string;
@@ -89,6 +90,9 @@ async function logoutOnce(): Promise<{ status: 'ok' }> {
  * refresh is cleared by the API and already represents an unusable session.
  */
 export async function logout(): Promise<{ status: 'ok' }> {
+  // Ending the session must also drop the pending AI prompt so it can never
+  // auto-apply under the next account on this device.
+  clearPendingInvitationPrompt();
   try {
     return await logoutOnce();
   } catch (error) {

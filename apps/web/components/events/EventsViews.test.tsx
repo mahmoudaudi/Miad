@@ -84,7 +84,7 @@ describe('events views', () => {
     expect(data).toContain('Recent Projects');
     expect(data).toContain('/api/designs/invitation-1/render');
     expect(data).toContain('Published');
-    expect(data).toContain('/dashboard/invitations/invitation-1/editor');
+    expect(data).toContain('/dashboard/invitations/new?invitationId=invitation-1');
     expect(data).toContain('/dashboard/events/event-1/edit');
     expect(data).toContain('Delete');
   });

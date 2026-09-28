@@ -20,7 +20,7 @@ export function Transformation({ locale }: { locale: Locale }) {
   return (
     <section
       aria-labelledby="transformation-heading"
-      className="relative overflow-hidden border-y border-line bg-[#F6F3EF] py-16 md:py-24"
+      className="relative overflow-hidden border-y border-line bg-[rgb(var(--section-alt))] py-16 md:py-24"
     >
       <div
         aria-hidden="true"
@@ -28,7 +28,7 @@ export function Transformation({ locale }: { locale: Locale }) {
       />
       <div
         aria-hidden="true"
-        className="absolute -end-20 bottom-0 h-80 w-80 rounded-full bg-[#D8B7A5]/20 blur-3xl"
+        className="absolute -end-20 bottom-0 h-80 w-80 rounded-full bg-[rgb(var(--tint-clay))]/20 blur-3xl"
       />
 
       <div className={`relative ${CONTAINER}`}>
@@ -47,9 +47,9 @@ export function Transformation({ locale }: { locale: Locale }) {
           </h2>
         </Reveal>
 
-        <Reveal className="rounded-[2rem] border border-black/[0.08] bg-white/80 p-3 shadow-[0_24px_80px_rgba(52,35,38,0.10)] backdrop-blur-sm sm:p-5 lg:p-6">
+        <Reveal className="rounded-[2rem] border border border-line bg-surface/80 p-3 shadow-[0_24px_80px_rgba(52,35,38,0.10)] backdrop-blur-sm sm:p-5 lg:p-6">
           <div className="grid items-stretch lg:grid-cols-[0.82fr_5rem_1.18fr]">
-            <article className="relative flex min-h-[340px] flex-col overflow-hidden rounded-[1.5rem] bg-[#261C1E] p-7 text-white sm:min-h-[400px] sm:p-10">
+            <article className="relative flex min-h-[340px] flex-col overflow-hidden rounded-[1.5rem] border border-[rgb(var(--border))] bg-[#261C1E] p-7 text-white sm:min-h-[400px] sm:p-10">
               <div
                 aria-hidden="true"
                 className="absolute -end-20 -top-20 h-64 w-64 rounded-full border border-white/10"
@@ -100,7 +100,7 @@ export function Transformation({ locale }: { locale: Locale }) {
                 >
                   {t.becomes}
                 </span>
-                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-white shadow-[0_8px_24px_rgba(122,38,58,0.24)]">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(122,38,58,0.24)]">
                   <span className="lg:hidden">
                     <span className="material-symbols-outlined text-xl" aria-hidden="true">
                       arrow_downward
@@ -115,12 +115,12 @@ export function Transformation({ locale }: { locale: Locale }) {
               </div>
             </div>
 
-            <article className="overflow-hidden rounded-[1.5rem] border border-black/10 bg-[#EEE9E3] shadow-[0_12px_32px_rgba(52,35,38,0.08)]">
+            <article className="overflow-hidden rounded-[1.5rem] border border-black/10 bg-[rgb(var(--tint-soft))] shadow-[0_12px_32px_rgba(52,35,38,0.08)]">
               <header className="flex min-h-14 items-center gap-4 border-b border-black/10 bg-white/90 px-5">
                 <div className="flex gap-1.5" aria-hidden="true">
                   <span className="h-2.5 w-2.5 rounded-full bg-primary/70" />
-                  <span className="h-2.5 w-2.5 rounded-full bg-[#D8B7A5]" />
-                  <span className="h-2.5 w-2.5 rounded-full bg-[#D8D2CB]" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[rgb(var(--tint-clay))]" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[rgb(var(--tint-chip))]" />
                 </div>
                 <div
                   dir="ltr"

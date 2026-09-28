@@ -81,7 +81,7 @@ Modified feature files include:
   `StudioImageBar.tsx`, and token/spacing references in the existing design/list views.
 - Events: form/list/detail/create/edit presentation and token references.
 - Guests: `GuestForm.tsx`, `GuestsListView.tsx`, and detail/create/edit token references.
-- Media: `MediaLibraryView.tsx`; notifications: `NotificationsView.tsx`.
+- Notifications: `NotificationsView.tsx`.
 - Browser regression checks: `apps/web/qa/responsive.cjs` and `apps/web/qa/interactions.cjs`.
 - Tests: landing and notification assertions now cover the account disclosure and
   actual unread count rather than obsolete markup/color literals.

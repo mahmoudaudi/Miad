@@ -33,8 +33,8 @@ function RecentProjectCards({ invitations }: { invitations: InvitationRecord[] }
       {invitations.map((invitation) => (
         <li key={invitation.id}>
           <Link
-            href={`/dashboard/invitations/${invitation.id}/editor`}
-            aria-label={`Open invitation editor: ${invitation.event.title}`}
+            href={`/dashboard/invitations/new?invitationId=${encodeURIComponent(invitation.id)}`}
+            aria-label={`Open ${invitation.event.title} in AI Studio`}
             className={`group block min-w-0 overflow-hidden rounded-xl border border-line bg-surface shadow-subtle transition duration-200 hover:-translate-y-0.5 hover:shadow-lift ${focusRing}`}
           >
             <div className="relative aspect-[4/3] overflow-hidden bg-[#f3f4f6]">
@@ -104,14 +104,14 @@ export function EventsListView({
             Invitations
           </h1>
           <p className="mt-3 max-w-xl text-body-lg text-muted">
-            Every invitation can be for any occasion, from a wedding to a private ceremony.
+          Describe an occasion in AI Studio to create an invitation, then manage its guests and responses here.
           </p>
         </div>
         <Link
           href="/dashboard/invitations/new"
           className={`inline-flex w-full justify-center rounded-xl bg-primary px-5 py-3 text-label-md text-white hover:bg-primary/90 sm:w-auto ${focusRing}`}
         >
-          Create Invitation
+          Create with AI
         </Link>
       </div>
 
@@ -180,13 +180,13 @@ export function EventsListView({
             </span>
             <h3 className="mt-3 font-display text-headline-sm text-ink">No projects yet</h3>
             <p className="mt-2 text-body-sm text-muted">
-              Your invitations will appear here after you create one.
+              Describe what you want in AI Studio. Your saved invitations will appear here.
             </p>
             <Link
               href="/dashboard/invitations/new"
               className={`mt-5 inline-flex rounded-lg bg-primary px-4 py-2.5 text-label-md text-white transition-colors hover:bg-primary/90 ${focusRing}`}
             >
-              Create an invitation
+              Start in AI Studio
             </Link>
           </div>
         )}
@@ -235,13 +235,13 @@ export function EventsListView({
           </span>
           <h2 className="mt-5 font-display text-headline-md text-ink">No invitations yet</h2>
           <p className="mt-3 max-w-md text-body-md text-muted">
-            Create your first invitation and its details will appear here.
+            Start in AI Studio to create your first invitation and event details.
           </p>
           <Link
             href="/dashboard/invitations/new"
             className={`mt-7 rounded-xl bg-primary px-5 py-3 text-label-md text-white ${focusRing}`}
           >
-            Create Invitation
+            Start in AI Studio
           </Link>
         </section>
       )}

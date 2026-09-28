@@ -8,7 +8,9 @@ export type CommunityDesignRecord = {
   title: string;
   description: string;
   category: string;
-  specification: InvitationDesignSpecification;
+  // Community snapshots can predate the current schema; consumers must guard
+  // their fields instead of trusting stored JSON to match the latest type.
+  specification: unknown;
   creator: { name: string };
   engagement: { views: number; likes: number; saves: number };
   isPublished: boolean;
@@ -33,8 +35,11 @@ export const applyCommunityDesign = (slug: string, invitationId: string) =>
     { method: 'POST' }
   );
 
-export const listMyCommunityDesigns = () =>
-  authenticatedApiClient<CommunityDesignRecord[]>('/community/mine');
+export const cloneCommunityDesign = (slug: string) =>
+  authenticatedApiClient<{ invitationId: string; designId: string; version: number }>(
+    `/community/${encodeURIComponent(slug)}/clone`,
+    { method: 'POST' }
+  );
 
 export const publishCommunityDesign = (
   invitationId: string,
@@ -43,10 +48,4 @@ export const publishCommunityDesign = (
   authenticatedApiClient<CommunityDesignRecord>(`/community/invitations/${invitationId}`, {
     method: 'POST',
     body: JSON.stringify(input),
-  });
-
-export const updateCommunityPublication = (id: string, published: boolean) =>
-  authenticatedApiClient<{ published: boolean }>(`/community/${id}/publication`, {
-    method: 'PATCH',
-    body: JSON.stringify({ published }),
   });

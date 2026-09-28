@@ -39,7 +39,32 @@ describe('PublicInvitationView', () => {
     expect(html).toContain('text-align:left');
     expect(html).toContain('font-family:Playfair Display');
     expect(html).toContain('Confirm Attendance');
+    expect(html).toContain('min-h-[100svh] w-full overflow-x-clip');
+    expect(html).toContain('min-h-[100svh] w-full overflow-visible');
+    expect(html).toContain('max-w-2xl');
     expect(html).not.toMatch(/Save changes|Editor controls|Publish/);
+  });
+
+  it('lets a long public invitation grow vertically while keeping the full-viewport canvas', () => {
+    const long = {
+      ...specification,
+      elements: Array.from({ length: 8 }, (_, index) => ({
+        id: `copy-${index}`,
+        type: 'text' as const,
+        label: `Section ${index + 1}`,
+        text: `A long invitation detail for guests to read comfortably. ${'A useful detail. '.repeat(8)}`,
+        x: 8,
+        y: index * 10,
+        width: 84,
+        height: 10,
+        fontSize: 16,
+        color: '#202122',
+      })),
+    };
+    const html = renderToStaticMarkup(<PublicInvitationView specification={long} slug="long-invitation" />);
+    expect(html).toContain('A long invitation detail for guests to read comfortably.');
+    expect(html).toContain('min-h-[100svh] w-full overflow-visible');
+    expect(html).toContain('Confirm Attendance');
   });
 
   it('renders HTML artifacts only through a sandboxed render route', () => {
@@ -54,8 +79,12 @@ describe('PublicInvitationView', () => {
         }}
       />
     );
-    expect(html).toContain('sandbox=""');
     expect(html).toContain('src="/api/public/invitations/an-evening/render"');
+    expect(html).toContain('sandbox="allow-same-origin"');
+    expect(html).toContain('h-[100svh] min-h-[100svh] w-full');
+    expect(html).toContain('id="rsvp"');
+    expect(html).toContain('Confirm Attendance');
+    expect(html.indexOf('</iframe>')).toBeLessThan(html.indexOf('id="rsvp"'));
     expect(html).not.toContain('dangerouslySetInnerHTML');
   });
 

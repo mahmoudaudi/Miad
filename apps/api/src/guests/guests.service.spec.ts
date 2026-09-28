@@ -17,7 +17,10 @@ type NotificationCall = { userId: string; guestName: string; status: string };
 function notificationsMock(overrides: Partial<Record<string, unknown>> = {}) {
   const calls: NotificationCall[] = [];
   const service = {
-    createRsvpNotification: async (tx: { notification: { create: (args: unknown) => Promise<unknown> } }, input: NotificationCall) => {
+    createRsvpNotification: async (
+      tx: { notification: { create: (args: unknown) => Promise<unknown> } },
+      input: NotificationCall
+    ) => {
       calls.push(input);
       await tx.notification.create({
         data: {
@@ -66,7 +69,8 @@ function transactionalPrisma(options: {
       const before = snapshot();
       const tx = {
         invitation: {
-          findFirst: async () => options.invitation ?? { id: 'invitation-1', event: { userId: 'owner-1' } },
+          findFirst: async () =>
+            options.invitation ?? { id: 'invitation-1', event: { userId: 'owner-1' } },
         },
         guest: {
           findMany: async () => options.guestMatches ?? [],
@@ -159,14 +163,28 @@ describe('GuestsService', () => {
 
   it('updates a guest only after the ownership-scoped lookup', async () => {
     let lookup: unknown;
+    let updateData: unknown;
     const prisma = {
       guest: {
         findFirst: async (args: { where: unknown }) => {
           lookup = args.where;
           return guest;
         },
-        update: async () => ({ ...guest, name: 'Nadia A.' }),
       },
+      $transaction: async (run: (transaction: unknown) => Promise<unknown>) =>
+        run({
+          guest: {
+            update: async (args: { data: unknown }) => {
+              updateData = args.data;
+            },
+            findUniqueOrThrow: async () => ({
+              ...guest,
+              name: 'Nadia A.',
+              rsvp: { status: 'PENDING', attendeesCount: 0, message: null, respondedAt: null },
+            }),
+          },
+          rsvp: { upsert: async () => undefined },
+        }),
     };
     const result = await new GuestsService(prisma as never, notificationsMock().service).update(
       'owner-1',
@@ -179,6 +197,7 @@ describe('GuestsService', () => {
       invitation: { event: { id: 'event-1', userId: 'owner-1' } },
     });
     expect(result.name).toBe('Nadia A.');
+    expect(updateData).toEqual({ name: 'Nadia A.' });
   });
 
   it('rejects a public RSVP for a draft or missing invitation', async () => {
@@ -192,23 +211,27 @@ describe('GuestsService', () => {
     await expect(
       service.createPublicRsvp('garden-party', {
         name: 'Nadia',
-        email: 'nadia@example.com',
         status: 'ATTENDING',
-        attendeesCount: 1,
       })
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('links a public response to a matching guest without changing guest identity', async () => {
+  it('updates a uniquely name-matched RSVP without changing existing guest contact data', async () => {
     let rsvpData: unknown;
+    let guestUpdateCalled = false;
     const transaction = {
       invitation: {
         findFirst: async () => ({ id: 'invitation-1', event: { userId: 'owner-1' } }),
       },
-      guest: { findMany: async () => [{ id: guest.id, rsvp: null }] },
+      guest: {
+        findMany: async () => [{ id: guest.id, rsvp: { id: 'existing-rsvp' } }],
+        update: async () => {
+          guestUpdateCalled = true;
+        },
+      },
       rsvp: {
-        create: async (args: { data: unknown }) => {
-          rsvpData = args.data;
+        upsert: async (args: { update: unknown }) => {
+          rsvpData = args.update;
         },
       },
       notification: { create: async () => ({ id: 'n-1' }) },
@@ -222,26 +245,30 @@ describe('GuestsService', () => {
     );
     await expect(
       service.createPublicRsvp('garden-party', {
-        name: 'Different display name',
-        email: 'nadia@example.com',
-        status: 'PENDING',
-        attendeesCount: 1,
+        name: 'Nadia',
+        status: 'ATTENDING',
+        attendeesCount: 2,
       })
     ).resolves.toEqual({ status: 'received' });
-    expect(rsvpData).toMatchObject({ guestId: guest.id, status: 'PENDING' });
-    expect(rsvpData).not.toHaveProperty('name');
+    expect(rsvpData).toMatchObject({ status: 'ATTENDING', attendeesCount: 2 });
+    expect(guestUpdateCalled).toBe(false);
     expect(notifications.calls).toEqual([
-      { userId: 'owner-1', guestName: 'Different display name', status: 'PENDING' },
+      { userId: 'owner-1', guestName: 'Nadia', status: 'ATTENDING' },
     ]);
   });
 
-  it('rejects duplicate public responses and invalid attendance rules without creating a notification', async () => {
+  it('rejects ambiguous matches and invalid attendance rules without creating a notification', async () => {
     const transaction = {
       invitation: {
         findFirst: async () => ({ id: 'invitation-1', event: { userId: 'owner-1' } }),
       },
-      guest: { findMany: async () => [{ id: guest.id, rsvp: { id: 'rsvp-1' } }] },
-      rsvp: { create: async () => ({ id: 'x' }) },
+      guest: {
+        findMany: async () => [
+          { id: guest.id, rsvp: { id: 'rsvp-1' } },
+          { id: 'guest-2', rsvp: null },
+        ],
+      },
+      rsvp: { upsert: async () => ({ id: 'x' }) },
       notification: { create: async () => ({ id: 'n-1' }) },
     };
     const notifications = notificationsMock();
@@ -254,7 +281,6 @@ describe('GuestsService', () => {
     await expect(
       service.createPublicRsvp('garden-party', {
         name: 'Nadia',
-        email: 'nadia@example.com',
         status: 'ATTENDING',
         attendeesCount: 1,
       })
@@ -262,7 +288,6 @@ describe('GuestsService', () => {
     await expect(
       service.createPublicRsvp('garden-party', {
         name: 'Nadia',
-        email: 'nadia@example.com',
         status: 'NOT_ATTENDING',
         attendeesCount: 1,
       })
@@ -277,12 +302,14 @@ describe('GuestsService', () => {
     await expect(
       service.createPublicRsvp('garden-party', {
         name: 'Nadia',
-        email: 'nadia@example.com',
         status: 'ATTENDING',
-        attendeesCount: 2,
       })
     ).resolves.toEqual({ status: 'received' });
     expect(staging.guestCreates).toHaveLength(1);
+    expect(staging.guestCreates[0]).toMatchObject({
+      name: 'Nadia',
+      rsvp: { create: { status: 'ATTENDING', attendeesCount: 1 } },
+    });
     expect(staging.notificationCreates).toHaveLength(1);
     expect(notifications.calls).toEqual([
       { userId: 'owner-1', guestName: 'Nadia', status: 'ATTENDING' },
@@ -301,9 +328,7 @@ describe('GuestsService', () => {
     await expect(
       service.createPublicRsvp('garden-party', {
         name: 'Nadia',
-        email: 'nadia@example.com',
         status: 'ATTENDING',
-        attendeesCount: 1,
       })
     ).rejects.toThrow('notification insert failed');
     expect(staging.guestCreates).toHaveLength(0);

@@ -64,7 +64,7 @@ describe('invitation views', () => {
       />
     );
     expect(data).toContain('garden-dinner');
-    expect(data).toContain('/dashboard/invitations/invitation-1/edit');
+    expect(data).toContain('/dashboard/invitations/new?invitationId=invitation-1');
   });
 
   it('renders create and populated edit forms', () => {
@@ -106,11 +106,9 @@ describe('invitation views', () => {
     );
     expect(html).toContain('Garden Dinner');
     expect(html).toContain('Not published');
-    expect(html).toContain('/dashboard/invitations/invitation-1/design');
-    expect(html).toContain('Design');
-    expect(html).toContain('/dashboard/invitations/invitation-1/media');
-    expect(html).toContain('Media');
-    expect(html).toContain('Edit');
+    expect(html).toContain('/dashboard/invitations/new?invitationId=invitation-1');
+    expect(html).toContain('Open in AI Studio');
+    expect(html).toContain('Open in AI Studio');
     expect(html).toContain('Delete');
     expect(html).toContain('Publish');
     expect(html).not.toContain('/invite/garden-dinner');
@@ -136,7 +134,7 @@ describe('invitation views', () => {
     );
     expect(html).toContain('Unpublishing…');
     expect(html).toContain('/invite/garden-dinner');
-    expect(html).toContain('Copy link');
+    expect(html).toContain('aria-label="Share invitation"');
     expect(html).toContain('Share');
     expect(html).toContain('Open invitation');
     expect(html).toContain('Publication failed');

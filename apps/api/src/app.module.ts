@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { resolve } from 'node:path';
+import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { AiStudioModule } from './ai-studio/ai-studio.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -15,7 +16,7 @@ import { GuestsModule } from './guests/guests.module';
 import { HealthModule } from './health/health.module';
 import { InvitationDesignsModule } from './invitation-designs/invitation-designs.module';
 import { InvitationsModule } from './invitations/invitations.module';
-import { MediaModule } from './media/media.module';
+import { InvitationImagesModule } from './invitation-images/invitation-images.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { TemplatesModule } from './templates/templates.module';
@@ -24,9 +25,9 @@ import { TemplatesModule } from './templates/templates.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      // The API can be launched from the monorepo root, where a separate
-      // frontend environment file may exist. Always load this app's config.
-      envFilePath: resolve(__dirname, '..', '.env'),
+      // Resolve from this module's source/build directory to the monorepo root
+      // so every workspace service shares the same environment file.
+      envFilePath: resolve(__dirname, '../../../.env'),
       load: [configuration],
       validationSchema,
       validationOptions: { allowUnknown: true, abortEarly: false },
@@ -35,6 +36,7 @@ import { TemplatesModule } from './templates/templates.module';
     PrismaModule,
     HealthModule,
     AuthModule,
+    AdminModule,
     AiStudioModule,
     AnalyticsModule,
     CommunityModule,
@@ -43,7 +45,7 @@ import { TemplatesModule } from './templates/templates.module';
     GuestsModule,
     InvitationsModule,
     InvitationDesignsModule,
-    MediaModule,
+    InvitationImagesModule,
     NotificationsModule,
     TemplatesModule,
   ],

@@ -6,16 +6,23 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccountMenu } from '@/components/ui/AccountMenu';
+import { useToast } from '@/components/ui/ToastProvider';
 import { useOverlay } from '@/components/ui/useOverlay';
 import { AuthUser, getCurrentUser, logout } from '@/lib/auth';
+import { getPostAuthRedirectTarget, getRoleHomePath } from '@/lib/auth-redirect';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { AUTH_SUCCESS_MESSAGES, withAuthFeedback } from '@/lib/auth-feedback';
 import { useLocale } from '@/lib/i18n/LocaleProvider';
+import { AUTH_MODAL_OPEN_EVENT } from './AuthModalTrigger';
 import {
   PENDING_PROMPT_AUTH_EVENT,
   PENDING_PROMPT_TARGET,
+  adoptPendingInvitationPrompt,
   readPendingInvitationPrompt,
 } from '@/lib/pending-invitation-prompt';
 import type { AuthMode } from './AuthModal';
+import { BRAND_BLUR_DATA_URL, Skeleton } from './LandingSkeleton';
+import { ThemeToggle } from './ThemeToggle';
 
 // The login/register forms only load when the visitor opens the auth modal,
 // keeping them out of the initial landing bundle.
@@ -24,13 +31,13 @@ const AuthModal = dynamic(
   { ssr: false }
 );
 
-export type LandingNavLinkDef = { key: 'howItWorks' | 'templates' | 'pricing'; href: string };
+export type LandingNavLinkDef = { key: 'templates' | 'features' | 'enterprise'; href: string };
 
 /** Navbar destinations — labels resolve from the dictionary (see NAV_LINKS). */
 export const NAV_LINK_DEFS: LandingNavLinkDef[] = [
-  { key: 'howItWorks', href: '/#how-it-works' },
   { key: 'templates', href: '/#templates' },
-  { key: 'pricing', href: '/#pricing' },
+  { key: 'features', href: '/#features-heading' },
+  { key: 'enterprise', href: '/#pricing' },
 ];
 
 /** @deprecated Prefer NAV_LINK_DEFS + dictionary labels for translations. */
@@ -58,11 +65,10 @@ type HeaderViewProps = {
   onLogout: () => void;
 };
 
-const headerBase =
-  'fixed inset-x-0 top-0 z-50 h-20 border-b px-3 transition-[background-color,border-color,box-shadow,backdrop-filter] duration-200 sm:px-5 md:px-gutter';
+const headerBase = 'fixed inset-x-3 top-3 z-50 sm:inset-x-5';
 
 const navLinkBase =
-  'group relative inline-flex min-h-11 items-center justify-center rounded-lg px-4 text-label-md transition-colors hover:bg-ink/[0.035] hover:text-ink';
+  'miad-nav-motion group relative inline-flex min-h-10 items-center justify-center rounded-xl px-3 text-label-md transition-[background-color,color,transform] duration-200 hover:-translate-y-px hover:bg-ink/[0.04] hover:text-ink';
 
 function HeaderActions({
   t,
@@ -79,11 +85,18 @@ function HeaderActions({
   t: ReturnType<typeof getDictionary>;
 }) {
   if (authStatus === 'loading') {
+    // Real pending state: /auth/me is in flight. The placeholders mirror the
+    // size of what replaces them, so nothing shifts when the session resolves.
     return (
       <div
         aria-label={t.auth.checkingAccount}
-        className="hidden h-11 w-40 animate-pulse rounded-xl bg-ink/5 lg:block"
-      />
+        aria-busy="true"
+        className="hidden items-center gap-1.5 lg:flex"
+      >
+        <span className="sr-only">{t.auth.checkingAccount}</span>
+        <Skeleton className="h-10 w-16 rounded-xl" />
+        <Skeleton className="h-10 w-[4.5rem] rounded-xl" />
+      </div>
     );
   }
 
@@ -101,26 +114,9 @@ function HeaderActions({
 
   if (authStatus === 'authenticated' && user) {
     return (
-      <>
-        <Link
-          href="/dashboard/invitations/new"
-          className={`hidden min-h-11 items-center whitespace-nowrap rounded-xl px-4 text-label-md text-muted transition-colors hover:bg-ink/[0.04] hover:text-ink lg:inline-flex ${focusRing}`}
-        >
-          {t.nav.dashboard}
-        </Link>
-        <Link
-          href="/dashboard/invitations/new"
-          className={`hidden min-h-11 items-center gap-2 whitespace-nowrap rounded-xl bg-primary px-5 text-label-md text-white shadow-[0_6px_18px_rgba(122,38,58,0.18)] transition-[background-color,box-shadow] hover:bg-primary-hover hover:shadow-[0_8px_22px_rgba(122,38,58,0.22)] lg:inline-flex ${focusRing}`}
-        >
-          {t.auth.createInvitation}
-          <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-            arrow_forward
-          </span>
-        </Link>
-        <div className="hidden lg:block">
-          <AccountMenu user={user} loggingOut={loggingOut} onLogout={onLogout} compact />
-        </div>
-      </>
+      <div className="hidden lg:block">
+        <AccountMenu user={user} loggingOut={loggingOut} onLogout={onLogout} compact />
+      </div>
     );
   }
 
@@ -129,19 +125,16 @@ function HeaderActions({
       <button
         type="button"
         onClick={() => onAuthOpen('login')}
-        className={`hidden min-h-11 items-center justify-center whitespace-nowrap rounded-xl border border-transparent px-4 text-label-md text-muted transition-colors hover:border-line hover:bg-surface/80 hover:text-ink lg:inline-flex ${focusRing}`}
+        className={`hidden min-h-10 items-center justify-center whitespace-nowrap rounded-xl px-3 text-label-md font-medium text-muted transition-colors hover:bg-ink/[0.04] hover:text-ink lg:inline-flex ${focusRing}`}
       >
         {t.auth.login}
       </button>
       <button
         type="button"
         onClick={() => onAuthOpen('register')}
-        className={`hidden min-h-11 items-center gap-2 whitespace-nowrap rounded-xl bg-primary px-5 text-label-md text-white shadow-[0_6px_18px_rgba(122,38,58,0.18)] transition-[background-color,box-shadow] hover:bg-primary-hover hover:shadow-[0_8px_22px_rgba(122,38,58,0.22)] lg:inline-flex ${focusRing}`}
+        className={`miad-nav-motion hidden min-h-10 items-center justify-center whitespace-nowrap rounded-xl border border-line bg-surface px-3.5 text-label-md font-semibold text-ink transition-[background-color,border-color,box-shadow] duration-200 hover:border-primary/25 hover:bg-secondary/50 hover:shadow-subtle lg:inline-flex ${focusRing}`}
       >
-        {t.auth.createInvitation}
-        <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-          arrow_forward
-        </span>
+        {t.auth.signup}
       </button>
     </>
   );
@@ -178,31 +171,35 @@ export function HeaderView({
   );
 
   return (
-    <header
-      dir="ltr"
-      className={`${headerBase} ${
-        scrolled || menuOpen
-          ? 'border-line bg-background/95 shadow-[0_12px_32px_rgba(23,23,23,0.07)] backdrop-blur-xl'
-          : 'border-transparent bg-background/80 backdrop-blur-xl'
-      }`}
-    >
-      <div className="mx-auto grid h-20 max-w-[1240px] grid-cols-[auto_1fr_auto] items-center gap-3 lg:gap-8">
+    <header dir="ltr" className={headerBase}>
+      <div
+        className={`mx-auto grid h-16 max-w-[1240px] grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border px-2.5 shadow-[0_12px_32px_rgba(23,23,23,0.08)] backdrop-blur-2xl transition-[background-color,border-color,box-shadow] duration-300 sm:gap-3 sm:px-4 lg:gap-6 lg:px-5 ${
+          scrolled || menuOpen
+            ? 'border-line/90 bg-surface/95 shadow-[0_16px_38px_rgba(23,23,23,0.11)]'
+            : 'border-[rgb(var(--nav-glass-border))]/70 bg-surface/85'
+        }`}
+      >
         <Link
           href="/"
           aria-label={t.nav.home}
-          className={`flex min-h-11 shrink-0 items-center rounded-lg p-1.5 ${focusRing}`}
+          className={`flex min-h-11 shrink-0 items-center rounded-xl px-1 ${focusRing}`}
         >
           <Image
             alt={t.nav.logo}
-            className="h-14 w-28 shrink-0 object-contain sm:h-16 sm:w-32"
+            className="h-12 w-[6.25rem] shrink-0 object-contain sm:w-28"
             src={LOGO_URL}
             width={150}
             height={100}
+            placeholder="blur"
+            blurDataURL={BRAND_BLUR_DATA_URL}
             priority
           />
         </Link>
 
-        <nav aria-label={t.nav.landing} className="hidden items-center gap-1 lg:flex">
+        <nav
+          aria-label={t.nav.landing}
+          className="hidden items-center justify-center gap-1 lg:flex"
+        >
           {navLinks.map((item) => {
             const active = activeKey === item.key;
             return (
@@ -211,7 +208,7 @@ export function HeaderView({
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
                 className={`${navLinkBase} ${
-                  active ? 'bg-ink/[0.04] font-semibold text-ink' : 'font-medium text-muted'
+                  active ? 'bg-secondary/70 font-semibold text-primary' : 'font-medium text-muted'
                 } ${focusRing}`}
               >
                 <span className="relative z-10">{item.label}</span>
@@ -228,7 +225,8 @@ export function HeaderView({
           })}
         </nav>
 
-        <div className="flex min-w-0 items-center justify-end gap-2">
+        <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
+          <ThemeToggle className="hidden lg:inline-flex" />
           <HeaderActions
             t={t}
             authStatus={authStatus}
@@ -244,7 +242,7 @@ export function HeaderView({
             aria-expanded={menuOpen}
             aria-controls="landing-mobile-menu"
             aria-label={menuOpen ? t.nav.closeMenu : t.nav.openMenu}
-            className={`flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-surface/80 text-ink transition-colors hover:bg-ink/[0.04] lg:hidden ${focusRing}`}
+            className={`miad-nav-motion flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-surface text-ink transition-[background-color,transform] duration-200 hover:scale-[1.03] hover:bg-secondary/60 active:scale-100 lg:hidden ${focusRing}`}
           >
             <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
               {menuOpen ? 'close' : 'menu'}
@@ -259,7 +257,7 @@ export function HeaderView({
             type="button"
             aria-label={t.nav.closeMenu}
             onClick={() => onMenuChange(false)}
-            className="fixed inset-x-0 top-20 z-0 h-[calc(100dvh-5rem)] bg-ink/30 backdrop-blur-[2px] lg:hidden"
+            className="fixed inset-x-0 top-20 z-0 h-[calc(100dvh-5rem)] bg-ink/20 backdrop-blur-[2px] lg:hidden"
           />
           <nav
             ref={mobileRef}
@@ -268,13 +266,15 @@ export function HeaderView({
             aria-modal="true"
             id="landing-mobile-menu"
             aria-label={t.nav.mobile}
-            className="absolute inset-x-3 top-[calc(100%+0.5rem)] z-10 max-h-[calc(100dvh-6rem)] overflow-y-auto rounded-2xl border border-line bg-surface p-4 text-start shadow-lift sm:inset-x-5 sm:p-5 lg:hidden"
+            className="miad-nav-menu-enter absolute inset-x-0 top-[calc(100%+0.625rem)] z-10 max-h-[calc(100dvh-6rem)] overflow-y-auto rounded-2xl border border-line bg-surface p-4 text-start shadow-[0_20px_50px_rgba(23,23,23,0.16)] sm:p-5 lg:hidden"
           >
             <div className="mb-4 flex items-center justify-between border-b border-line px-1 pb-4">
               <div>
-                <p className="text-title text-ink">{t.nav.menuTitle}</p>
+                <p className="font-display text-title text-ink">{t.nav.menuTitle}</p>
                 <p className="mt-0.5 text-body-sm text-muted">{t.nav.menuDescription}</p>
               </div>
+              <div className="flex items-center gap-1">
+              <ThemeToggle />
               <button
                 type="button"
                 aria-label={t.nav.closeMenu}
@@ -285,6 +285,7 @@ export function HeaderView({
                   close
                 </span>
               </button>
+              </div>
             </div>
             <ul className="grid gap-2">
               {navLinks.map((item) => {
@@ -297,7 +298,7 @@ export function HeaderView({
                       aria-current={active ? 'page' : undefined}
                       className={`group flex min-h-14 items-center justify-between rounded-xl border px-4 text-body-md transition-colors ${
                         active
-                          ? 'border-line bg-secondary/[0.55] font-semibold text-ink shadow-subtle'
+                          ? 'border-primary/15 bg-secondary/60 font-semibold text-primary shadow-subtle'
                           : 'border-transparent bg-surface-muted/60 font-medium text-muted hover:border-line hover:bg-surface-muted hover:text-ink'
                       } ${focusRing}`}
                     >
@@ -327,7 +328,7 @@ export function HeaderView({
                   <div className="grid gap-2">
                     {user && (
                       <div className="mb-2 flex min-h-16 items-center gap-3 rounded-xl border border-line bg-surface-muted/60 px-4 py-3">
-                        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-white">
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
                           {`${user.firstName.charAt(0)}${user.lastName.charAt(0)}`.toUpperCase()}
                         </span>
                         <div className="min-w-0">
@@ -338,16 +339,6 @@ export function HeaderView({
                         </div>
                       </div>
                     )}
-                    <Link
-                      href="/dashboard/invitations/new"
-                      onClick={() => onMenuChange(false)}
-                      className={`flex min-h-12 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-body-md font-semibold text-white shadow-[0_6px_18px_rgba(122,38,58,0.16)] ${focusRing}`}
-                    >
-                      {t.auth.createInvitation}
-                      <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                        arrow_forward
-                      </span>
-                    </Link>
                     <Link
                       href="/dashboard/invitations/new"
                       onClick={() => onMenuChange(false)}
@@ -373,24 +364,21 @@ export function HeaderView({
                       type="button"
                       onClick={() => {
                         onMenuChange(false);
-                        onAuthOpen('register');
+                        onAuthOpen('login');
                       }}
-                      className={`flex min-h-12 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-body-md font-semibold text-white shadow-[0_6px_18px_rgba(122,38,58,0.16)] ${focusRing}`}
+                      className={`min-h-12 rounded-xl border border-line bg-surface px-4 text-body-md font-medium text-ink transition-[background-color,border-color] hover:border-primary/25 hover:bg-secondary/50 ${focusRing}`}
                     >
-                      {t.auth.createInvitation}
-                      <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                        arrow_forward
-                      </span>
+                      {t.auth.login}
                     </button>
                     <button
                       type="button"
                       onClick={() => {
                         onMenuChange(false);
-                        onAuthOpen('login');
+                        onAuthOpen('register');
                       }}
-                      className={`min-h-12 rounded-xl border border-line bg-surface px-4 text-body-md font-medium text-ink transition-colors hover:bg-ink/[0.03] ${focusRing}`}
+                      className={`min-h-12 rounded-xl border border-line bg-surface px-4 text-body-md font-semibold text-ink transition-[background-color,border-color] hover:border-primary/25 hover:bg-secondary/50 ${focusRing}`}
                     >
-                      {t.auth.login}
+                      {t.auth.signup}
                     </button>
                     {authStatus === 'error' && (
                       <button
@@ -426,6 +414,7 @@ export function Header() {
   const router = useRouter();
   const pathname = usePathname();
   const { locale } = useLocale();
+  const showToast = useToast();
   const t = getDictionary(locale);
   const [scrolled, setScrolled] = useState(false);
   const [activeKey, setActiveKey] = useState<LandingNavLinkDef['key'] | null>(null);
@@ -504,6 +493,15 @@ export function Header() {
 
   useEffect(() => {
     setMenuOpen(false);
+    setActiveKey(pathname === '/' && window.location.hash === '#pricing' ? 'enterprise' : null);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (pathname !== '/') return;
+    const requestedMode = new URLSearchParams(window.location.search).get('auth');
+    if (requestedMode === 'login' || requestedMode === 'register') {
+      setAuthMode(requestedMode);
+    }
   }, [pathname]);
 
   useEffect(() => {
@@ -517,7 +515,26 @@ export function Header() {
     return () => window.removeEventListener(PENDING_PROMPT_AUTH_EVENT, openSavedPromptRegistration);
   }, [t.auth.promptSavedNotice]);
 
+  useEffect(() => {
+    const onOpenAuthModal = (event: Event) => {
+      const mode = (event as CustomEvent<unknown>).detail;
+      if (mode !== 'login' && mode !== 'register') return;
+      if (authStatus === 'authenticated' && user) {
+        router.push(getRoleHomePath(user.role));
+        return;
+      }
+      setAuthNotice(null);
+      setAuthMode(mode);
+    };
+    window.addEventListener(AUTH_MODAL_OPEN_EVENT, onOpenAuthModal);
+    return () => window.removeEventListener(AUTH_MODAL_OPEN_EVENT, onOpenAuthModal);
+  }, [authStatus, user, router]);
+
   function openAuth(mode: AuthMode) {
+    if (authStatus === 'authenticated' && user) {
+      router.push(getRoleHomePath(user.role));
+      return;
+    }
     setAuthNotice(null);
     setAuthMode(mode);
   }
@@ -526,7 +543,12 @@ export function Header() {
     setLoggingOut(true);
     setAuthError(null);
     try {
-      await logout();
+      await withAuthFeedback(
+        () => logout(),
+        AUTH_SUCCESS_MESSAGES.logout,
+        t.auth.logoutFailed,
+        showToast
+      );
       setUser(null);
       setMenuOpen(false);
       setAuthStatus('anonymous');
@@ -546,8 +568,17 @@ export function Header() {
     setAuthMode(null);
     setAuthNotice(null);
     setMenuOpen(false);
-    router.push(
-      readPendingInvitationPrompt() ? PENDING_PROMPT_TARGET : '/dashboard/invitations/new'
+    // Bind any anonymously saved prompt to this account so a later account
+    // switch discards it instead of applying it.
+    adoptPendingInvitationPrompt(authenticatedUser.id);
+    router.replace(
+      getPostAuthRedirectTarget({
+        role: authenticatedUser.role,
+        search: window.location.search,
+        fallback: readPendingInvitationPrompt()
+          ? PENDING_PROMPT_TARGET
+          : '/dashboard/invitations/new',
+      })
     );
   }
 
@@ -576,6 +607,9 @@ export function Header() {
           onClose={() => {
             setAuthMode(null);
             setAuthNotice(null);
+            if (pathname === '/' && new URLSearchParams(window.location.search).has('auth')) {
+              router.replace('/');
+            }
           }}
           onSuccess={handleAuthSuccess}
         />

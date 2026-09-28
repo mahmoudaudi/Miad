@@ -1,0 +1,68 @@
+/**
+ * Admin portal styles — scoped to the /admin route group via CSS Modules.
+ * Nothing here leaks into the user app (Inter + Playfair theme untouched).
+ */
+
+.root {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Inner admin shell (overview + future pages): Geist application type. */
+.shellRoot {
+  font-family: 'Geist', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Filled Material Symbols variant for active/emphasized glyphs. */
+.symbolFilled {
+  font-variation-settings:
+    'FILL' 1,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
+}
+
+/* Left brand pane: burgundy gradient with a diagonal glow edge. */
+.brandPane {
+  background: linear-gradient(to bottom right, #3a0611, #520b1a 45%, #500a18);
+  clip-path: polygon(0% 0%, 75% 0%, 100% 100%, 0% 100%);
+}
+
+/* Subtle geometric grid micro-pattern over the brand pane. */
+.bgPattern {
+  background-size: 28px 28px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+}
+
+/* White-inverted repo logo (same asset as the user app). */
+.logoImg {
+  filter: brightness(0) invert(1);
+}
+
+@keyframes admin-pulse-shimmer {
+  0%,
+  100% {
+    opacity: 0.45;
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.25));
+  }
+  50% {
+    opacity: 0.95;
+    filter:
+      drop-shadow(0 0 14px rgba(255, 255, 255, 0.65))
+      drop-shadow(0 0 25px rgba(254, 115, 139, 0.4));
+  }
+}
+
+.shimmerLine {
+  animation: admin-pulse-shimmer 4s ease-in-out infinite;
+  will-change: opacity, filter;
+}

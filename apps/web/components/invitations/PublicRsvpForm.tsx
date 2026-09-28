@@ -23,9 +23,8 @@ type ViewProps = {
 };
 const inputClass = 'miad-input mt-2';
 const choices: { value: RsvpStatus; label: string; note: string }[] = [
-  { value: 'ATTENDING', label: 'Accept', note: 'I’ll be there' },
-  { value: 'PENDING', label: 'Maybe', note: 'I’m not certain yet' },
-  { value: 'NOT_ATTENDING', label: 'Decline', note: 'I can’t make it' },
+  { value: 'ATTENDING', label: 'Yes', note: 'I’ll be there' },
+  { value: 'NOT_ATTENDING', label: 'No', note: 'I can’t make it' },
 ];
 
 export function PublicRsvpFormView({
@@ -75,29 +74,32 @@ export function PublicRsvpFormView({
           </p>
         )}
         <fieldset disabled={submitting} className="space-y-6">
-          <legend className="sr-only">Confirm Attendance details</legend>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {choices.map((choice) => (
-              <label
-                key={choice.value}
-                className={`cursor-pointer rounded-xl border p-4 focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 text-center transition ${values.status === choice.value ? 'border-primary bg-primary/5' : 'border-line'}`}
-              >
-                <input
-                  type="radio"
-                  name="status"
-                  value={choice.value}
-                  checked={values.status === choice.value}
-                  onChange={() => onChange('status', choice.value)}
-                  className="sr-only"
-                />
-                <span className="block text-label-md text-ink">{choice.label}</span>
-                <span className="mt-1 block text-body-sm text-muted">{choice.note}</span>
-              </label>
-            ))}
+          <legend className="sr-only">RSVP details</legend>
+          <div>
+            <p className="text-label-md text-ink">Attendance *</p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              {choices.map((choice) => (
+                <label
+                  key={choice.value}
+                  className={`cursor-pointer rounded-xl border p-4 focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 text-center transition ${values.status === choice.value ? 'border-primary bg-primary/5' : 'border-line'}`}
+                >
+                  <input
+                    type="radio"
+                    name="status"
+                    value={choice.value}
+                    checked={values.status === choice.value}
+                    onChange={() => onChange('status', choice.value)}
+                    className="sr-only"
+                  />
+                  <span className="block text-label-md text-ink">{choice.label}</span>
+                  <span className="mt-1 block text-body-sm text-muted">{choice.note}</span>
+                </label>
+              ))}
+            </div>
           </div>
           <div>
             <label htmlFor="rsvp-name" className="text-label-md text-ink">
-              Name *
+              Full Name *
             </label>
             <input
               id="rsvp-name"
@@ -111,60 +113,9 @@ export function PublicRsvpFormView({
             />
             {error('name')}
           </div>
-          <div className="grid gap-6 sm:grid-cols-2">
-            <div>
-              <label htmlFor="rsvp-email" className="text-label-md text-ink">
-                Email
-              </label>
-              <input
-                id="rsvp-email"
-                type="email"
-                value={values.email}
-                onChange={(event) => onChange('email', event.target.value)}
-                maxLength={255}
-                autoComplete="email"
-                aria-invalid={Boolean(errors.email || errors.contact)}
-                aria-describedby={
-                  [
-                    errors.email ? 'rsvp-email-error' : '',
-                    errors.contact ? 'rsvp-contact-error' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ') || undefined
-                }
-                className={inputClass}
-              />
-              {error('email')}
-            </div>
-            <div>
-              <label htmlFor="rsvp-phone" className="text-label-md text-ink">
-                Phone
-              </label>
-              <input
-                id="rsvp-phone"
-                type="tel"
-                value={values.phone}
-                onChange={(event) => onChange('phone', event.target.value)}
-                maxLength={50}
-                autoComplete="tel"
-                aria-invalid={Boolean(errors.phone || errors.contact)}
-                aria-describedby={
-                  [
-                    errors.phone ? 'rsvp-phone-error' : '',
-                    errors.contact ? 'rsvp-contact-error' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ') || undefined
-                }
-                className={inputClass}
-              />
-              {error('phone')}
-            </div>
-          </div>
-          {error('contact')}
           <div>
             <label htmlFor="rsvp-count" className="text-label-md text-ink">
-              Number attending
+              Number of Guests <span className="font-normal text-muted">(optional)</span>
             </label>
             <input
               id="rsvp-count"
@@ -174,6 +125,7 @@ export function PublicRsvpFormView({
               value={values.attendeesCount}
               onChange={(event) => onChange('attendeesCount', event.target.value)}
               disabled={submitting || values.status === 'NOT_ATTENDING'}
+              placeholder={values.status === 'ATTENDING' ? '1' : '0'}
               aria-invalid={Boolean(errors.attendeesCount)}
               aria-describedby={errors.attendeesCount ? 'rsvp-attendeesCount-error' : undefined}
               className={inputClass}
@@ -182,7 +134,7 @@ export function PublicRsvpFormView({
           </div>
           <div>
             <label htmlFor="rsvp-message" className="text-label-md text-ink">
-              Message for the host
+              Message/Note <span className="font-normal text-muted">(optional)</span>
             </label>
             <textarea
               id="rsvp-message"
@@ -222,18 +174,12 @@ export function PublicRsvpForm({ slug }: { slug: string }) {
       return {
         ...current,
         status: value as RsvpStatus,
-        attendeesCount:
-          value === 'NOT_ATTENDING'
-            ? '0'
-            : current.attendeesCount === '0'
-              ? '1'
-              : current.attendeesCount,
+        attendeesCount: value === 'NOT_ATTENDING' ? '' : current.attendeesCount,
       };
     });
     setErrors((current) => ({
       ...current,
       [field]: undefined,
-      ...(field === 'email' || field === 'phone' ? { contact: undefined } : {}),
     }));
     setServerError(null);
   };

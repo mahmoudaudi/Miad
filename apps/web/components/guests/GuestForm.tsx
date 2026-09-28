@@ -17,6 +17,7 @@ type Props = {
   submitting: boolean;
   serverError: string | null;
   onSubmit: (input: GuestInput) => void;
+  onCancel?: () => void;
 };
 
 const inputClass = 'miad-input mt-2';
@@ -30,10 +31,11 @@ export function GuestForm({
   submitting,
   serverError,
   onSubmit,
+  onCancel,
 }: Props) {
   const [values, setValues] = useState(initialValues);
   const [errors, setErrors] = useState<GuestFormErrors>({});
-  const set = (field: keyof GuestFormValues, value: string) => {
+  const set = (field: 'name' | 'email' | 'phone' | 'notes', value: string) => {
     setValues((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: undefined }));
   };
@@ -118,14 +120,89 @@ export function GuestForm({
             </p>
           )}
         </div>
+        <div>
+          <label htmlFor="status" className="text-label-md text-ink">
+            RSVP status
+          </label>
+          <select
+            id="status"
+            value={values.status}
+            onChange={(event) =>
+              setValues((current) => ({
+                ...current,
+                status: event.target.value as GuestFormValues['status'],
+                partySize:
+                  event.target.value === 'ATTENDING' && current.partySize < 1
+                    ? 1
+                    : event.target.value === 'NOT_ATTENDING'
+                      ? 0
+                      : current.partySize,
+              }))
+            }
+            className={inputClass}
+          >
+            <option value="PENDING">Pending</option>
+            <option value="ATTENDING">Attending</option>
+            <option value="NOT_ATTENDING">Declined</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="partySize" className="text-label-md text-ink">
+            Party size
+          </label>
+          <input
+            id="partySize"
+            type="number"
+            min={values.status === 'ATTENDING' ? 1 : 0}
+            max={20}
+            value={values.partySize}
+            disabled={values.status !== 'ATTENDING'}
+            onChange={(event) =>
+              setValues((current) => ({ ...current, partySize: Number(event.target.value) }))
+            }
+            aria-invalid={Boolean(errors.partySize)}
+            aria-describedby={errors.partySize ? 'guest-party-size-error' : undefined}
+            className={`${inputClass} disabled:opacity-60`}
+          />
+          {errors.partySize && (
+            <p id="guest-party-size-error" className="mt-2 text-body-sm text-error">
+              {errors.partySize}
+            </p>
+          )}
+        </div>
+        <div className="sm:col-span-2">
+          <label htmlFor="notes" className="text-label-md text-ink">
+            Notes
+          </label>
+          <textarea
+            id="notes"
+            value={values.notes}
+            onChange={(event) => set('notes', event.target.value)}
+            maxLength={1000}
+            rows={3}
+            className={inputClass}
+            placeholder="Dietary notes, requests, or RSVP message"
+          />
+          {errors.notes && <p className="mt-2 text-body-sm text-error">{errors.notes}</p>}
+        </div>
       </fieldset>
       <div className="flex flex-col-reverse gap-3 border-t border-line pt-6 sm:flex-row sm:justify-end">
-        <Link
-          href={cancelHref}
-          className={`rounded-xl border border-line px-5 py-3 text-center text-label-md text-ink ${focusRing}`}
-        >
-          Cancel
-        </Link>
+        {onCancel ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            className={`rounded-xl border border-line px-5 py-3 text-center text-label-md text-ink ${focusRing}`}
+          >
+            Cancel
+          </button>
+        ) : (
+          <Link
+            href={cancelHref}
+            className={`rounded-xl border border-line px-5 py-3 text-center text-label-md text-ink ${focusRing}`}
+          >
+            Cancel
+          </Link>
+        )}
         <button
           type="submit"
           disabled={submitting}

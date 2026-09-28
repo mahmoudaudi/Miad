@@ -9,6 +9,40 @@ type SeedTemplate = {
   specification: Prisma.InputJsonValue;
 };
 
+const AI_CREDITS_PER_CYCLE = 'AI_CREDITS_PER_CYCLE';
+
+/** Initial catalog values only; runtime entitlements are read from the database. */
+const planSeed = [
+  {
+    name: 'Free',
+    description: 'A small monthly allowance for trying AI invitations.',
+    price: new Prisma.Decimal('0.00'),
+    billingInterval: 'MONTHLY',
+    creditsPerCycle: 10,
+  },
+  {
+    name: 'Starter',
+    description: 'Entry-level credits for occasional event hosts.',
+    price: new Prisma.Decimal('9.99'),
+    billingInterval: 'MONTHLY',
+    creditsPerCycle: 100,
+  },
+  {
+    name: 'Pro',
+    description: 'A larger monthly allowance for active creators.',
+    price: new Prisma.Decimal('29.99'),
+    billingInterval: 'MONTHLY',
+    creditsPerCycle: 500,
+  },
+  {
+    name: 'Premium',
+    description: 'The highest monthly allowance for high-volume teams.',
+    price: new Prisma.Decimal('59.99'),
+    billingInterval: 'MONTHLY',
+    creditsPerCycle: 1500,
+  },
+] as const;
+
 function templateSpec({
   theme,
   eyebrow,
@@ -203,6 +237,48 @@ async function main() {
       create: { name: 'admin', description: 'Platform administrator' },
     });
     console.log('Seeded roles: user, admin');
+
+    const creditFeature = await prisma.feature.upsert({
+      where: { name: AI_CREDITS_PER_CYCLE },
+      update: {
+        description: 'Credits granted at the start of each plan billing cycle.',
+      },
+      create: {
+        name: AI_CREDITS_PER_CYCLE,
+        description: 'Credits granted at the start of each plan billing cycle.',
+      },
+    });
+    for (const plan of planSeed) {
+      const savedPlan = await prisma.plan.upsert({
+        where: { name: plan.name },
+        update: {
+          description: plan.description,
+          price: plan.price,
+          billingInterval: plan.billingInterval,
+          isActive: true,
+        },
+        create: {
+          name: plan.name,
+          description: plan.description,
+          price: plan.price,
+          billingInterval: plan.billingInterval,
+          isActive: true,
+        },
+      });
+      await prisma.planFeature.upsert({
+        where: {
+          planId_featureId: { planId: savedPlan.id, featureId: creditFeature.id },
+        },
+        update: { enabled: true, limitValue: plan.creditsPerCycle },
+        create: {
+          planId: savedPlan.id,
+          featureId: creditFeature.id,
+          enabled: true,
+          limitValue: plan.creditsPerCycle,
+        },
+      });
+    }
+    console.log(`Seeded plans: ${planSeed.map((plan) => plan.name).join(', ')}`);
 
     for (const template of templateSeed) {
       await prisma.template.upsert({

@@ -138,7 +138,7 @@ Use 160ms interaction feedback and 240ms state transitions with
 | Component | Product integration | Behavior |
 | --- | --- | --- |
 | `ShareButton` | Published invitation details | Disclosure, staggered options, awaited clipboard feedback, optional browser share, manual-copy fallback |
-| `DeleteButton` | Shared deletion confirmation for invitations, events, guests and media | Physical trash/text movement, loading/error states, repeated-click protection |
+| `DeleteButton` | Shared deletion confirmation for invitations, events, and guests | Physical trash/text movement, loading/error states, repeated-click protection |
 | `PublishButton` | Invitation publication/unpublication | Stable width, rolling text, pending/success/error labels; success settles to the next available action |
 | `SendButton` | AI studio generation and public RSVP | Dark pill, restrained hover glow, moving icon, request states |
 | `LookAwayLogin` | Login and registration, standalone and modal | Four CSS characters; mouse tracking; look away for password focus; receives no password values |

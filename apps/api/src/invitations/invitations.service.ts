@@ -4,10 +4,11 @@ import {
   Injectable,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { MediaStorageService } from '../media/media-storage.service';
-import { storageKeyFromUrl } from '../media/media-validation';
+import { InvitationImageStorageService } from '../invitation-images/invitation-image-storage.service';
+import { storageKeyFromUrl } from '../invitation-images/invitation-image-validation';
 import { InvitationDesignsService } from '../invitation-designs/invitation-designs.service';
 import { HtmlArtifactValidationError } from '../invitation-designs/html-artifact';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,6 +21,7 @@ const invitationSelect = {
   slug: true,
   status: true,
   publishedAt: true,
+  publishedDesignVersion: true,
   createdAt: true,
   updatedAt: true,
   event: { select: { id: true, title: true, eventDate: true } },
@@ -34,6 +36,7 @@ export type InvitationResponse = {
   slug: string;
   status: string;
   publishedAt: string | null;
+  publishedDesignVersion: number | null;
   createdAt: string;
   updatedAt: string;
   hasDesign: boolean;
@@ -45,7 +48,7 @@ export class InvitationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly designs: InvitationDesignsService,
-    @Optional() private readonly storage?: MediaStorageService
+    @Optional() private readonly imageStorage?: InvitationImageStorageService
   ) {}
 
   async findAll(userId: string, eventId?: string): Promise<InvitationResponse[]> {
@@ -168,12 +171,12 @@ export class InvitationsService {
   async remove(userId: string, id: string): Promise<void> {
     const invitation = await this.prisma.invitation.findFirst({
       where: { id, event: { userId } },
-      select: { id: true, media: { select: { fileUrl: true } } },
+      select: { id: true, images: { select: { userId: true, fileUrl: true } } },
     });
     if (!invitation) throw new NotFoundException('Invitation not found.');
 
     try {
-      await this.deleteInvitationSubtree(invitation.id, invitation.media);
+      await this.deleteInvitationSubtree(invitation.id, invitation.images);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
         throw new ConflictException('This invitation cannot be deleted while it has related data.');
@@ -183,41 +186,56 @@ export class InvitationsService {
   }
 
   /**
-   * Deletes an invitation with its entire subtree (designs, guests + RSVPs,
-   * media rows, AI usage, views). The caller must have verified ownership —
+   * Deletes an invitation with its entire subtree (publication, designs,
+   * guests + RSVPs, images, AI usage, views). The caller must have verified ownership —
    * `remove()` scopes by user, `EventsService` by owned event.
-   * Storage objects are removed best-effort first: bucket orphans are inert
-   * (unique paths, never reused) while a storage outage must not trap the
-   * invitation in an undeletable state.
+   * Database writes stay uncommitted until the one batched Storage cleanup
+   * succeeds, so a Storage failure rolls the relational deletion back.
    */
   async deleteInvitationSubtree(
     invitationId: string,
-    mediaAssets: Array<{ fileUrl: string }> = []
+    images: Array<{ userId: string; fileUrl: string }> = []
   ): Promise<void> {
-    await this.removeMediaObjects(mediaAssets);
-    await this.prisma.$transaction([
-      this.prisma.rsvp.deleteMany({ where: { guest: { invitationId } } }),
-      this.prisma.guest.deleteMany({ where: { invitationId } }),
-      this.prisma.mediaAsset.deleteMany({ where: { invitationId } }),
-      this.prisma.aiUsage.deleteMany({ where: { invitationId } }),
-      this.prisma.invitationView.deleteMany({ where: { invitationId } }),
-      this.prisma.invitationDesign.deleteMany({ where: { invitationId } }),
-      this.prisma.invitation.delete({ where: { id: invitationId } }),
-    ]);
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.communityDesign.deleteMany({ where: { invitationId } });
+        await tx.rsvp.deleteMany({ where: { guest: { invitationId } } });
+        await tx.guest.deleteMany({ where: { invitationId } });
+        await tx.invitationImage.deleteMany({ where: { invitationId } });
+        await tx.aiUsage.deleteMany({ where: { invitationId } });
+        await tx.invitationView.deleteMany({ where: { invitationId } });
+        await tx.invitationDesign.deleteMany({ where: { invitationId } });
+        await tx.invitation.delete({ where: { id: invitationId } });
+        // Keep the transaction open until the external cleanup acknowledges
+        // the whole batch. Throwing here rolls every relational delete back.
+        await this.removeInvitationImages(invitationId, images);
+      },
+      { timeout: 15_000 }
+    );
   }
 
-  private async removeMediaObjects(mediaAssets: Array<{ fileUrl: string }>): Promise<void> {
-    if (!this.storage || mediaAssets.length === 0) return;
-    await Promise.allSettled(
-      mediaAssets.map(async (asset) => {
-        try {
-          const key = storageKeyFromUrl(asset.fileUrl);
-          if (key) await this.storage?.removeObject(key);
-        } catch {
-          // Best-effort: row deletion below is authoritative.
-        }
-      })
-    );
+  private async removeInvitationImages(
+    invitationId: string,
+    images: Array<{ userId: string; fileUrl: string }>
+  ): Promise<void> {
+    if (images.length === 0) return;
+    if (!this.imageStorage) {
+      throw new ServiceUnavailableException('Invitation media could not be cleaned up.');
+    }
+    const keys = images.map((image) => {
+      const key = storageKeyFromUrl(image.fileUrl);
+      const ownedInvitationPrefix = `${image.userId}/${invitationId}/`;
+      const ownedPendingPrefix = `${image.userId}/pending/`;
+      if (!key || (!key.startsWith(ownedInvitationPrefix) && !key.startsWith(ownedPendingPrefix))) {
+        throw new ServiceUnavailableException('Invitation media could not be cleaned up.');
+      }
+      return key;
+    });
+    try {
+      await this.imageStorage.removeObjects([...new Set(keys)]);
+    } catch {
+      throw new ServiceUnavailableException('Invitation media could not be cleaned up.');
+    }
   }
 
   private rethrowKnownConflict(error: unknown): never {
@@ -236,6 +254,7 @@ export class InvitationsService {
       slug: invitation.slug,
       status: invitation.status,
       publishedAt: invitation.publishedAt?.toISOString() ?? null,
+      publishedDesignVersion: invitation.publishedDesignVersion ?? null,
       createdAt: invitation.createdAt.toISOString(),
       updatedAt: invitation.updatedAt.toISOString(),
       hasDesign: Boolean(invitation.designs?.length),

@@ -63,7 +63,7 @@ export function CreateInvitationClient({ eventId }: { eventId: string }) {
         }
       }
       clearPendingInvitationPrompt();
-      router.push(`/dashboard/invitations/${invitation.id}/editor`);
+      router.push(`/dashboard/invitations/new?invitationId=${encodeURIComponent(invitation.id)}`);
       router.refresh();
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) {
@@ -95,10 +95,10 @@ export function CreateInvitationClient({ eventId }: { eventId: string }) {
         prompt: savedPrompt.trim(),
         mode: 'generate',
       });
-      const editorHref = `/dashboard/invitations/${failedInvitation.invitationId}/editor`;
+      const studioHref = `/dashboard/invitations/new?invitationId=${encodeURIComponent(failedInvitation.invitationId)}`;
       clearPendingInvitationPrompt();
       setFailedInvitation(null);
-      router.push(editorHref);
+      router.push(studioHref);
       router.refresh();
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) {
@@ -150,7 +150,7 @@ export function CreateInvitationClient({ eventId }: { eventId: string }) {
       {failedInvitation && (
         <GenerationFailedNotice
           message={failedInvitation.message}
-          editorHref={`/dashboard/invitations/${failedInvitation.invitationId}/editor`}
+          studioHref={`/dashboard/invitations/new?invitationId=${encodeURIComponent(failedInvitation.invitationId)}`}
           generating={generating}
           onRetry={() => void retryGeneration()}
         />

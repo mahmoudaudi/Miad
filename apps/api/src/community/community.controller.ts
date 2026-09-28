@@ -30,6 +30,12 @@ export class CommunityController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post(':slug/clone')
+  clone(@CurrentUser() user: AuthPayload, @Param('slug') slug: string) {
+    return this.community.clone(user.sub, slug);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post('invitations/:invitationId')
   publish(@CurrentUser() user: AuthPayload, @Param('invitationId', new ParseUUIDPipe()) invitationId: string, @Body() dto: PublishCommunityDesignDto) {
     return this.community.publish(user.sub, invitationId, dto);

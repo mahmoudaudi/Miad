@@ -2,8 +2,14 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { AiStudioWorkspaceChrome, type StudioProfile } from '@/components/invitations/AiStudioView';
+import {
+  AiStudioWorkspaceChrome,
+  type StudioProfile,
+} from '@/components/invitations/AiStudioView';
+import { useToast } from '@/components/ui/ToastProvider';
 import { AuthUser, getCurrentUser, logout } from '@/lib/auth';
+import { ADMIN_HOME_PATH, isAdminRole } from '@/lib/admin-auth';
+import { AUTH_SUCCESS_MESSAGES, withAuthFeedback } from '@/lib/auth-feedback';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLocale } from '@/lib/i18n/LocaleProvider';
 
@@ -15,6 +21,22 @@ const WorkspaceActionsContext = createContext<{
 
 export function isAiStudioPath(pathname: string | null): boolean {
   return pathname?.replace(/\/+$/, '') === '/dashboard/invitations/new';
+}
+
+export type DashboardGuardDecision =
+  | { type: 'allow' }
+  | { type: 'deny-login' }
+  | { type: 'deny-admin' };
+
+/**
+ * Pure routing decision for the dashboard guard. Admins are denied the
+ * normal dashboard (they belong on the admin portal); the caller redirects
+ * and must not store or render the admin session here.
+ */
+export function decideDashboardAccess(user: AuthUser | null): DashboardGuardDecision {
+  if (!user) return { type: 'deny-login' };
+  if (isAdminRole(user.role)) return { type: 'deny-admin' };
+  return { type: 'allow' };
 }
 
 export function useDashboardSession(): AuthUser {
@@ -29,7 +51,20 @@ export function useWorkspaceActions() {
   return actions;
 }
 
-function StudioLoading({ label }: { label: string }) {
+function StudioLoading({ label, aiStudio }: { label: string; aiStudio: boolean }) {
+  if (!aiStudio) {
+    return (
+      <main
+        aria-busy="true"
+        aria-live="polite"
+        className="miad-studio-theme min-h-[100dvh] bg-[#f1f3f5] px-4 py-8 text-[#20242a] sm:px-6"
+      >
+        <span className="sr-only">{label}</span>
+        <div className="mx-auto h-32 max-w-6xl animate-pulse rounded-2xl border border-[#d7dbe0] bg-white" />
+      </main>
+    );
+  }
+
   return (
     <main
       aria-busy="true"
@@ -77,6 +112,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { locale } = useLocale();
+  const showToast = useToast();
   const t = getDictionary(locale);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -90,11 +126,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const current = await getCurrentUser();
-      if (!current) {
+      const decision = decideDashboardAccess(current);
+      if (decision.type === 'deny-login') {
         router.replace(`/login?next=${encodeURIComponent(window.location.pathname)}`);
         return;
       }
-      setUser(current);
+      // Authoritative backstop: admins must never render normal dashboard
+      // UI, even when navigating to /dashboard/* manually. Do not store the
+      // admin session here and do not render children below.
+      if (decision.type === 'deny-admin') {
+        router.replace(ADMIN_HOME_PATH);
+        return;
+      }
+      if (current) setUser(current);
     } catch {
       setError(t.dashboard.accountLoadFailed);
     } finally {
@@ -111,7 +155,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     setLoggingOut(true);
     setActionError(null);
     try {
-      await logout();
+      await withAuthFeedback(
+        () => logout(),
+        AUTH_SUCCESS_MESSAGES.logout,
+        t.dashboard.logoutFailed,
+        showToast
+      );
       router.replace('/');
       router.refresh();
     } catch {
@@ -121,11 +170,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   if (loading || (!user && !error)) {
-    return <StudioLoading label={t.dashboard.workspaceLoading} />;
+    return <StudioLoading label={t.dashboard.workspaceLoading} aiStudio={isAiStudio} />;
   }
   if (error || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div
+        className="miad-studio-theme flex min-h-screen items-center justify-center bg-[#f1f3f5] px-4"
+      >
         <section className="w-full max-w-lg rounded-2xl border border-line bg-surface p-8 text-center shadow-subtle">
           <h1 className="font-display text-headline-md text-ink">
             {t.dashboard.workspaceUnavailable}
@@ -152,6 +203,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           children
         ) : (
           <AiStudioWorkspaceChrome
+            showHeader={false}
             profile={
               {
                 name: `${user.firstName} ${user.lastName}`.trim() || 'Your account',
@@ -165,7 +217,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             onLogout={() => void handleLogout()}
           >
             {actionError && (
-              <p role="alert" className="miad-feedback-enter mb-4 text-sm text-[#9f1239]">
+              <p
+                role="alert"
+                className="miad-feedback-enter mx-auto max-w-6xl px-4 pt-4 text-sm text-[#9f1239] sm:px-6"
+              >
                 {actionError}
               </p>
             )}

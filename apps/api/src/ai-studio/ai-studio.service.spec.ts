@@ -75,6 +75,71 @@ function txPrisma() {
 }
 
 describe('AiStudioService', () => {
+  it('claims and includes only explicitly requested owner images', async () => {
+    const imageId = '11111111-1111-4111-8111-111111111111';
+    const { prisma: basePrisma } = txPrisma();
+    const updateMany = jest.fn(async () => ({ count: 1 }));
+    const prisma = {
+      ...basePrisma,
+      invitationImage: {
+        findMany: jest.fn(async () => [{ id: imageId, fileName: 'couple.jpg' }]),
+      },
+      $transaction: async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb({
+          event: { create: async () => storedEvent },
+          invitation: { create: async () => storedInvitation },
+          invitationImage: { updateMany },
+        }),
+    };
+    const provider = {
+      extractEventDetails: async () => ({
+        title: 'Lina Birthday',
+        eventType: 'Birthday',
+        eventDate: '2026-12-12',
+      }),
+    };
+    const generateHtmlWithAi = jest.fn(async () => design);
+    const service = new AiStudioService(
+      prisma as never,
+      { generateHtmlWithAi } as never,
+      provider as never
+    );
+
+    await service.createFromPrompt(
+      userId,
+      'Create a wedding invitation and use this photo for the couple.',
+      undefined,
+      undefined,
+      'auto',
+      undefined,
+      [imageId]
+    );
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [imageId] }, userId, invitationId: null },
+      data: { invitationId: 'inv-1' },
+    });
+    expect(generateHtmlWithAi).toHaveBeenCalledWith(
+      userId,
+      'inv-1',
+      expect.stringContaining('use this photo'),
+      undefined,
+      undefined,
+      'auto',
+      undefined,
+      [{ id: imageId, fileName: 'couple.jpg' }]
+    );
+  });
+
+  it('exposes the dynamically discovered Stitch model options', async () => {
+    const models = [{ id: 'GEMINI_3_8_FLASH', name: 'Stitch — Gemini 3.8 Flash' }];
+    const designs = { getStitchModelOptions: jest.fn(async () => ({ models })) };
+    const service = new AiStudioService({} as never, designs as never, {} as never);
+
+    await expect(service.getAiModels()).resolves.toEqual({ models });
+    expect(designs.getStitchModelOptions).toHaveBeenCalledTimes(1);
+  });
+
   it('creates event, invitation, and design in one shot from a prompt', async () => {
     const order: string[] = [];
     const { prisma, calls } = txPrisma();
@@ -97,7 +162,15 @@ describe('AiStudioService', () => {
     const service = new AiStudioService(prisma as never, designs as never, provider as never);
     const result = await service.createFromPrompt(userId, prompt);
 
-    expect(generateHtmlWithAi).toHaveBeenCalledWith(userId, 'inv-1', prompt, undefined, undefined);
+    expect(generateHtmlWithAi).toHaveBeenCalledWith(
+      userId,
+      'inv-1',
+      prompt,
+      undefined,
+      undefined,
+      'auto',
+      undefined
+    );
     expect(generateHtmlWithAi).not.toHaveBeenCalledWith(
       userId,
       'inv-1',
@@ -126,6 +199,34 @@ describe('AiStudioService', () => {
     });
     expect(result.design).not.toHaveProperty('designSpecification');
     expect(result.aiError).toBeNull();
+  });
+
+  it('sends a selected Stitch model only to website generation', async () => {
+    const { prisma } = txPrisma();
+    const extractEventDetails = jest.fn(async () => ({
+      title: 'Lina Birthday',
+      eventType: 'Birthday',
+      eventDate: '2026-12-12',
+    }));
+    const generateHtmlWithAi = jest.fn(async () => design);
+    const service = new AiStudioService(
+      prisma as never,
+      { generateHtmlWithAi } as never,
+      { extractEventDetails } as never
+    );
+
+    await service.createFromPrompt(userId, prompt, undefined, undefined, 'GEMINI_3_8_FLASH');
+
+    expect(extractEventDetails).toHaveBeenCalledWith(prompt, 'auto');
+    expect(generateHtmlWithAi).toHaveBeenCalledWith(
+      userId,
+      'inv-1',
+      prompt,
+      undefined,
+      undefined,
+      'GEMINI_3_8_FLASH',
+      undefined
+    );
   });
 
   it('falls back to deterministic details when extraction fails', async () => {
@@ -239,6 +340,91 @@ describe('AiStudioService', () => {
     ]);
   });
 
+  it('emits truthful refinement stages and completes only after the new version is saved', async () => {
+    const progress = new AiGenerationProgressService();
+    const generationId = '22222222-2222-4222-8222-222222222222';
+    const stages: AiGenerationStage[] = [];
+    const subscription = progress.observe(userId, generationId).subscribe((update) => {
+      stages.push(update.stage);
+    });
+    const designs = {
+      refineHtmlWithAi: async (
+        _userId: string,
+        _invitationId: string,
+        _prompt: string,
+        _signal: AbortSignal | undefined,
+        onProgress: (stage: AiGenerationStage) => void
+      ) => {
+        onProgress('REFINEMENT_INSPECTING');
+        onProgress('REFINEMENT_APPLYING');
+        onProgress('REFINEMENT_VALIDATING');
+        onProgress('REFINEMENT_SAVING');
+        return design;
+      },
+    };
+    const service = new AiStudioService({} as never, designs as never, {} as never, progress);
+
+    await expect(
+      service.refineGeneratedWebsite(
+        userId,
+        'inv-1',
+        'Make it more elegant',
+        undefined,
+        generationId
+      )
+    ).resolves.toEqual(design);
+    subscription.unsubscribe();
+    expect(stages).toEqual([
+      'REQUEST_RECEIVED',
+      'REFINEMENT_UNDERSTANDING',
+      'REFINEMENT_INSPECTING',
+      'REFINEMENT_APPLYING',
+      'REFINEMENT_VALIDATING',
+      'REFINEMENT_SAVING',
+      'COMPLETED',
+    ]);
+  });
+
+  it('marks a failed refinement without replacing the prior version or leaking provider detail', async () => {
+    const progress = new AiGenerationProgressService();
+    const generationId = '33333333-3333-4333-8333-333333333333';
+    const updates: Array<{ stage: AiGenerationStage; status: string; errorMessage?: string }> = [];
+    const subscription = progress.observe(userId, generationId).subscribe((update) => {
+      updates.push(update);
+    });
+    const designs = {
+      refineHtmlWithAi: async (
+        _userId: string,
+        _invitationId: string,
+        _prompt: string,
+        _signal: AbortSignal | undefined,
+        onProgress: (stage: AiGenerationStage) => void
+      ) => {
+        onProgress('REFINEMENT_INSPECTING');
+        onProgress('REFINEMENT_APPLYING');
+        throw new Error('Authorization: Bearer secret; raw provider content');
+      },
+    };
+    const service = new AiStudioService({} as never, designs as never, {} as never, progress);
+
+    await expect(
+      service.refineGeneratedWebsite(
+        userId,
+        'inv-1',
+        'Make it more elegant',
+        undefined,
+        generationId
+      )
+    ).rejects.toThrow('Authorization: Bearer secret; raw provider content');
+    subscription.unsubscribe();
+    expect(updates.at(-1)).toMatchObject({
+      stage: 'REFINEMENT_APPLYING',
+      status: 'FAILED',
+      errorMessage: 'Unable to update the invitation. The previous design is still preserved.',
+    });
+    expect(JSON.stringify(updates)).not.toContain('secret');
+  });
+
   it('maps slug collisions to a safe conflict error', async () => {
     const provider = { extractEventDetails: async () => ({}) };
     const prisma = {
@@ -313,7 +499,10 @@ describe('AiStudioService.analyze', () => {
     }));
     const prisma = { $transaction: jest.fn(), invitationDesign: { create: jest.fn() } };
 
-    const result = await service(analyzeDetails, prisma).analyze({ prompt: analyzePrompt });
+    const result = await service(analyzeDetails, prisma).analyze({
+      prompt: analyzePrompt,
+      modelPreference: 'GEMINI_3_8_FLASH',
+    });
 
     expect(result).toMatchObject({
       status: 'QUESTION',
@@ -322,6 +511,9 @@ describe('AiStudioService.analyze', () => {
     // Analysis is side-effect free: no invitation, no design, no event.
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.invitationDesign.create).not.toHaveBeenCalled();
+    expect(analyzeDetails).toHaveBeenCalledWith(
+      expect.objectContaining({ modelPreference: 'auto' })
+    );
   });
 
   it('returns READY with the merged brief for an already detailed prompt', async () => {
@@ -376,9 +568,10 @@ describe('AiStudioService.analyze', () => {
   });
 
   it('preserves multiple answers, including multi-value ones', async () => {
-    const analyzeDetails = jest.fn(
-      async (_input: { answers?: unknown }) => ({ status: 'READY', collectedData: {} })
-    );
+    const analyzeDetails = jest.fn(async (_input: { answers?: unknown }) => ({
+      status: 'READY',
+      collectedData: {},
+    }));
 
     await service(analyzeDetails).analyze({
       prompt: 'Tech Founder Dinner',

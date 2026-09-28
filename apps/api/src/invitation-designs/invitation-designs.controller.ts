@@ -57,7 +57,14 @@ export class InvitationDesignsController {
       'Cross-Origin-Resource-Policy': 'same-origin',
       'Cache-Control': 'no-store',
     });
-    res.send(renderHtmlDocument(artifact, nonce));
+    res.send(
+      renderHtmlDocument(
+        artifact,
+        nonce,
+        (imageId) =>
+          `/api/designs/${encodeURIComponent(invitationId)}/images/${encodeURIComponent(imageId)}`
+      )
+    );
   }
 
   @Post()
@@ -86,7 +93,15 @@ export class InvitationDesignsController {
     @Param('invitationId', new ParseUUIDPipe()) invitationId: string,
     @Body() dto: GenerateInvitationDesignDto
   ) {
-    return this.designs.generateHtmlWithAi(user.sub, invitationId, dto.prompt);
+    return this.designs.generateHtmlWithAi(
+      user.sub,
+      invitationId,
+      dto.prompt,
+      undefined,
+      undefined,
+      dto.modelPreference ?? 'auto',
+      dto.idempotencyKey
+    );
   }
 
   @Post('ai/refine')
@@ -106,7 +121,15 @@ export class InvitationDesignsController {
     @Param('invitationId', new ParseUUIDPipe()) invitationId: string,
     @Body() dto: RefineInvitationDesignDto
   ) {
-    return this.designs.refineHtmlWithAi(user.sub, invitationId, dto.instruction);
+    return this.designs.refineHtmlWithAi(
+      user.sub,
+      invitationId,
+      dto.instruction,
+      undefined,
+      undefined,
+      dto.modelPreference ?? 'auto',
+      dto.idempotencyKey
+    );
   }
 
   @Patch()

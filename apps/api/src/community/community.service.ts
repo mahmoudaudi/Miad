@@ -1,5 +1,12 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { InvitationImageStorageService } from '../invitation-images/invitation-image-storage.service';
+import {
+  isAllowedImageType,
+  storageKeyFor,
+  storageKeyFromUrl,
+} from '../invitation-images/invitation-image-validation';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ListCommunityQueryDto } from './dto/list-community-query.dto';
 import type { PublishCommunityDesignDto } from './dto/publish-community-design.dto';
@@ -35,7 +42,10 @@ export type CommunityDesignResponse = {
 
 @Injectable()
 export class CommunityService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly imageStorage: InvitationImageStorageService
+  ) {}
 
   async list(query: ListCommunityQueryDto): Promise<CommunityDesignResponse[]> {
     const search = query.search?.trim();
@@ -49,7 +59,7 @@ export class CommunityService {
       },
       select: communitySelect,
       orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-      take: 100,
+      take: query.limit ?? 100,
     });
     return rows.map((row) => this.toResponse(row));
   }
@@ -141,6 +151,195 @@ export class CommunityService {
       });
     });
     return created;
+  }
+
+  /**
+   * Creates a wholly new event, invitation, design version, and (when used)
+   * owner-scoped copies of the published design's image assets. Storage copies
+   * are compensated if the single database transaction fails.
+   */
+  async clone(userId: string, slug: string) {
+    const community = await this.prisma.communityDesign.findFirst({
+      where: { slug, isPublished: true },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        description: true,
+        category: true,
+        creatorId: true,
+        invitationId: true,
+        designSpecification: true,
+      },
+    });
+    if (!community) throw new NotFoundException('Community design not found.');
+    if (!this.isJsonObject(community.designSpecification)) {
+      throw new BadRequestException('This community design is not available to clone.');
+    }
+
+    // A publication is only a clone source when its source invitation is still
+    // owned by the publishing creator; this prevents stale/corrupt links from
+    // crossing account boundaries.
+    const sourceInvitation = await this.prisma.invitation.findFirst({
+      where: { id: community.invitationId, event: { userId: community.creatorId } },
+      select: { id: true },
+    });
+    if (!sourceInvitation) throw new NotFoundException('Community design not found.');
+
+    const sourceImageIds = this.imageIds(community.designSpecification);
+    const sourceImages = sourceImageIds.length
+      ? await this.prisma.invitationImage.findMany({
+          where: {
+            id: { in: sourceImageIds },
+            userId: community.creatorId,
+            invitationId: community.invitationId,
+          },
+          select: { id: true, userId: true, invitationId: true, fileName: true, fileUrl: true, fileType: true, fileSize: true },
+        })
+      : [];
+    if (sourceImages.length !== sourceImageIds.length) {
+      throw new BadRequestException('A design image is no longer available to clone.');
+    }
+
+    const newInvitationId = randomUUID();
+    const cloneImageRecords: Array<{
+      id: string;
+      userId: string;
+      invitationId: string;
+      fileName: string;
+      fileUrl: string;
+      fileType: string;
+      fileSize: bigint;
+    }> = [];
+    const copiedObjectKeys: string[] = [];
+    const imageIdMap = new Map<string, string>();
+
+    try {
+      for (const sourceImage of sourceImages) {
+        if (!isAllowedImageType(sourceImage.fileType)) {
+          throw new BadRequestException('A design image is not in a supported format.');
+        }
+        const sourceKey = storageKeyFromUrl(sourceImage.fileUrl);
+        const expectedPrefix = `${community.creatorId}/${community.invitationId}/`;
+        if (!sourceKey || !sourceKey.startsWith(expectedPrefix)) {
+          throw new BadRequestException('A design image is not available to clone.');
+        }
+        const id = randomUUID();
+        const destinationKey = storageKeyFor({
+          userId,
+          invitationId: newInvitationId,
+          imageId: id,
+          fileType: sourceImage.fileType,
+        });
+        await this.imageStorage.copyObject(sourceKey, destinationKey);
+        copiedObjectKeys.push(destinationKey);
+        imageIdMap.set(sourceImage.id, id);
+        cloneImageRecords.push({
+          id,
+          userId,
+          invitationId: newInvitationId,
+          fileName: sourceImage.fileName,
+          fileUrl: `invitation-media/${destinationKey}`,
+          fileType: sourceImage.fileType,
+          fileSize: sourceImage.fileSize,
+        });
+      }
+
+      const specification = this.remapImages(community.designSpecification, imageIdMap);
+      const eventDate = new Date();
+      eventDate.setUTCHours(0, 0, 0, 0);
+      const invitationSlug = `community-${community.slug}-${randomUUID().slice(0, 8)}`.slice(0, 255);
+      const created = await this.prisma.$transaction(async (transaction) => {
+        const event = await transaction.event.create({
+          data: {
+            userId,
+            title: community.title,
+            eventType: community.category,
+            description: community.description,
+            eventDate,
+          },
+          select: { id: true },
+        });
+        const invitation = await transaction.invitation.create({
+          data: { id: newInvitationId, eventId: event.id, slug: invitationSlug, status: 'DRAFT' },
+          select: { id: true },
+        });
+        if (cloneImageRecords.length > 0) {
+          await transaction.invitationImage.createMany({ data: cloneImageRecords });
+        }
+        const design = await transaction.invitationDesign.create({
+          data: {
+            invitationId: invitation.id,
+            version: 1,
+            designSpecification: specification as Prisma.InputJsonValue,
+            sourceType: 'COMMUNITY',
+            isActive: true,
+          },
+          select: { id: true, version: true },
+        });
+        return { invitationId: invitation.id, designId: design.id, version: design.version };
+      });
+      return created;
+    } catch (error) {
+      if (copiedObjectKeys.length > 0) {
+        try {
+          await this.imageStorage.removeObjects(copiedObjectKeys);
+        } catch {
+          // The database transaction remains rolled back; an unreachable,
+          // owner-scoped orphan is safer than exposing or reusing source data.
+        }
+      }
+      throw error;
+    }
+  }
+
+  private isJsonObject(value: Prisma.JsonValue): value is Prisma.JsonObject {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  private imageIds(specification: Prisma.JsonObject): string[] {
+    const elements = specification.elements;
+    if (!Array.isArray(elements)) return [];
+    const ids = elements.flatMap((candidate) => {
+      if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) return [];
+      const element = candidate as Prisma.JsonObject;
+      if (element.type !== 'image' || typeof element.imageUrl !== 'string') return [];
+      const match = /^(?:image|media):\/\/([0-9a-fA-F-]{36})$/.exec(element.imageUrl);
+      return match?.[1] ? [match[1]] : [];
+    });
+    return [...new Set(ids)];
+  }
+
+  private remapImages(specification: Prisma.JsonObject, imageIds: Map<string, string>): Prisma.InputJsonValue {
+    const copy = JSON.parse(JSON.stringify(specification)) as Record<string, unknown>;
+    if (Array.isArray(copy.elements)) {
+      copy.elements = copy.elements.map((candidate) => {
+        if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) return candidate;
+        const element = candidate as Record<string, unknown>;
+        if (element.type !== 'image' || typeof element.imageUrl !== 'string') return element;
+        const match = /^(?:image|media):\/\/([0-9a-fA-F-]{36})$/.exec(element.imageUrl);
+        const sourceId = match?.[1];
+        const cloneId = sourceId ? imageIds.get(sourceId) : undefined;
+        if (cloneId) return { ...element, imageUrl: `image://${cloneId}` };
+        if (/^(?:image|media):\/\//.test(element.imageUrl)) return { ...element, imageUrl: '' };
+        // Never carry a source owner's time-limited/private Storage URL into
+        // the clone. Stable public HTTPS assets may remain shared by design.
+        try {
+          const url = new URL(element.imageUrl);
+          if (
+            !['http:', 'https:'].includes(url.protocol) ||
+            /\/storage\/v1\/object\/(?:sign|authenticated)\//.test(url.pathname) ||
+            [...url.searchParams.keys()].some((key) => /token|signature|access[_-]?key|auth/i.test(key))
+          ) {
+            return { ...element, imageUrl: '' };
+          }
+          return element;
+        } catch {
+          return { ...element, imageUrl: '' };
+        }
+      });
+    }
+    return copy as Prisma.InputJsonValue;
   }
 
   private slugFor(value: string): string {

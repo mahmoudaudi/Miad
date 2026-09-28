@@ -10,6 +10,19 @@ export default () => ({
   supabaseUrl: process.env.SUPABASE_URL ?? '',
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
   aiServiceUrl: process.env.AI_SERVICE_URL ?? 'http://localhost:8000',
+  // Temporary compatibility mode: strict AI design schema checks can be
+  // restored with AI_STRICT_DESIGN_VALIDATION=true.
+  aiStrictDesignValidation: process.env.AI_STRICT_DESIGN_VALIDATION === 'true',
+  // Phase 2 credit costs. Only AI generation and AI edits of the current
+  // design consume credits; Smart Questions, manual editing, image uploads and
+  // publishing are always free and never call the credit service.
+  aiCreditCostGeneration: parseInt(process.env.AI_CREDIT_COST_GENERATION ?? '1', 10),
+  aiCreditCostEdit: parseInt(process.env.AI_CREDIT_COST_EDIT ?? '1', 10),
+  // Free plan welcome credits, granted once per normal account. Manual testing
+  // only: there is no payment provider or subscription behind this yet.
+  freeCreditsAmount: parseInt(process.env.FREE_CREDITS_AMOUNT ?? '10', 10),
+  // Server-only Stitch credential. Never expose this in the web application.
+  stitchApiKey: process.env.STITCH_API_KEY ?? '',
   // OpenRouter is the registered invitation AI provider. This must not be
   // altered by a legacy process-level AI_PROVIDER value.
   aiProvider: 'openrouter',
@@ -17,12 +30,24 @@ export default () => ({
   // web app or expose them through a NEXT_PUBLIC variable.
   openrouterApiKey: process.env.OPENROUTER_API_KEY ?? '',
   openrouterModel: process.env.OPENROUTER_MODEL ?? 'deepseek/deepseek-v4.1-flash',
+  openrouterModelGeneration: process.env.OPENROUTER_MODEL_GENERATION ?? '',
+  openrouterModelGenerationFallbacks: process.env.OPENROUTER_MODEL_GENERATION_FALLBACKS ?? '',
+  openrouterModelRefinement: process.env.OPENROUTER_MODEL_REFINEMENT ?? '',
+  openrouterModelRefinementFallbacks: process.env.OPENROUTER_MODEL_REFINEMENT_FALLBACKS ?? '',
+  openrouterModelSmartQuestions: process.env.OPENROUTER_MODEL_SMART_QUESTIONS ?? '',
+  openrouterModelSmartQuestionsFallbacks:
+    process.env.OPENROUTER_MODEL_SMART_QUESTIONS_FALLBACKS ?? '',
+  openrouterModelImagePlanning: process.env.OPENROUTER_MODEL_IMAGE_PLANNING ?? '',
+  openrouterModelImagePlanningFallbacks:
+    process.env.OPENROUTER_MODEL_IMAGE_PLANNING_FALLBACKS ?? '',
+  openrouterModelValidation: process.env.OPENROUTER_MODEL_VALIDATION ?? '',
+  openrouterModelValidationFallbacks: process.env.OPENROUTER_MODEL_VALIDATION_FALLBACKS ?? '',
+  openrouterModelFuture: process.env.OPENROUTER_MODEL_FUTURE ?? '',
+  openrouterModelFutureFallbacks: process.env.OPENROUTER_MODEL_FUTURE_FALLBACKS ?? '',
   openrouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1',
-  // Only short event-detail extraction has a budget (it fails safe to
-  // deterministic defaults). Website generation has no application-level
-  // deadline: it runs until the provider responds or the caller cancels.
-  // AI_PROVIDER_TIMEOUT_MS remains an extraction fallback for existing
-  // deployments.
+  openrouterRequestTimeoutMs: parseInt(process.env.OPENROUTER_REQUEST_TIMEOUT_MS ?? '120000', 10),
+  // Event-detail extraction remains brief and fails safe to deterministic
+  // defaults. Every model operation also has its own bounded request timeout.
   openrouterExtractionTimeoutMs: parseInt(
     process.env.OPENROUTER_EXTRACTION_TIMEOUT_MS ?? process.env.AI_PROVIDER_TIMEOUT_MS ?? '20000',
     10

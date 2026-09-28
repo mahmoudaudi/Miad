@@ -5,6 +5,7 @@ import {
   IsArray,
   IsIn,
   IsObject,
+  IsOptional,
   IsString,
   IsUUID,
   Length,
@@ -40,6 +41,10 @@ class GeneratedProjectDto {
 
 export class RefineAiStudioDto {
   @IsUUID()
+  @IsOptional()
+  generationId?: string;
+
+  @IsUUID()
   invitationId!: string;
 
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
@@ -53,4 +58,22 @@ export class RefineAiStudioDto {
   @ValidateNested()
   @Type(() => GeneratedProjectDto)
   website!: GeneratedProjectDto;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  modelPreference?: string;
+
+  /** Stable key for one logical AI request; reuse it to avoid double charging. */
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MaxLength(120)
+  idempotencyKey?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsUUID('4', { each: true })
+  imageIds?: string[];
 }

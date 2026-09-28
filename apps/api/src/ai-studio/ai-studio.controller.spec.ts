@@ -20,6 +20,35 @@ function fakeReq(writableEnded: boolean) {
 }
 
 describe('AiStudioController generate', () => {
+  it('forwards refinement progress ids together with the persisted project identity', async () => {
+    const result = { invitationId: 'inv-1', version: 2 };
+    const studio = { refineGeneratedWebsite: jest.fn(async () => result) };
+    const controller = new AiStudioController(studio as never, new AiGenerationProgressService());
+    const { req } = fakeReq(true);
+
+    await expect(
+      controller.refine(
+        { sub: 'user-1' } as never,
+        {
+          generationId: '22222222-2222-4222-8222-222222222222',
+          invitationId: 'inv-1',
+          prompt: 'Make it more elegant',
+          website: { name: 'Prior design', description: 'Existing', files: [] },
+        } as never,
+        req
+      )
+    ).resolves.toEqual(result);
+    expect(studio.refineGeneratedWebsite).toHaveBeenCalledWith(
+      'user-1',
+      'inv-1',
+      'Make it more elegant',
+      expect.any(AbortSignal),
+      '22222222-2222-4222-8222-222222222222',
+      'auto',
+      undefined
+    );
+  });
+
   it('aborts only its own provider signal when the client disconnects', async () => {
     let resolveGeneration!: (value: unknown) => void;
     const signals: Array<AbortSignal | undefined> = [];
