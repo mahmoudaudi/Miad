@@ -2,10 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const css = readFileSync(
-  fileURLToPath(new URL('../app/globals.css', import.meta.url)),
-  'utf8'
-);
+const css = readFileSync(fileURLToPath(new URL('../app/globals.css', import.meta.url)), 'utf8');
 
 /** Returns the body of the CSS rule whose selector matches, brace-matched. */
 function ruleBody(selector: string, from = 0): string {
@@ -23,7 +20,7 @@ function ruleBody(selector: string, from = 0): string {
 }
 
 const lightBlock = ruleBody(':root', css.indexOf(':root'));
-const darkBlock = ruleBody('.dark .miad-landing');
+const darkBlock = ruleBody(':root.dark');
 
 function lightValue(property: string): string {
   return (new RegExp(`${property}:\\s*([^;]+);`).exec(lightBlock)?.[1] ?? '').trim();
@@ -115,12 +112,11 @@ describe('theme tokens', () => {
     expect(ratio(darkValue('--on-primary'), darkValue('--primary'))).toBeGreaterThan(4.5);
   });
 
-  it('scopes the dark palette to the landing page so other surfaces are untouched', () => {
-    expect(css).toContain('.dark .miad-landing {');
-    // A bare `.dark { }` rule may only carry color-scheme, never palette values.
-    const bare = /\.dark \{([^}]*)\}/.exec(css)?.[1] ?? '';
-    expect(bare).not.toMatch(/--/);
-    expect(bare).toContain('color-scheme');
+  it('applies the dark palette globally and provides shell-specific mappings', () => {
+    expect(css).toContain(':root.dark {');
+    expect(css).toContain('.dark .miad-studio-theme {');
+    expect(css).toContain('.dark .miad-admin-theme');
+    expect(darkBlock).toContain('color-scheme: dark');
   });
 
   it('cross-fades the theme rather than snapping', () => {

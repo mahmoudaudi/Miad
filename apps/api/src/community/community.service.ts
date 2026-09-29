@@ -8,6 +8,7 @@ import {
   storageKeyFromUrl,
 } from '../invitation-images/invitation-image-validation';
 import { PrismaService } from '../prisma/prisma.service';
+import { notifyAdmins } from '../notifications/notifications.service';
 import type { ListCommunityQueryDto } from './dto/list-community-query.dto';
 import type { PublishCommunityDesignDto } from './dto/publish-community-design.dto';
 
@@ -82,6 +83,20 @@ export class CommunityService {
     return rows.map((row) => this.toResponse(row));
   }
 
+  async findMineForInvitation(userId: string, invitationId: string): Promise<CommunityDesignResponse | null> {
+    const row = await this.prisma.communityDesign.findFirst({
+      where: { invitationId, creatorId: userId },
+      select: communitySelect,
+    });
+    return row ? this.toResponse(row) : null;
+  }
+
+  async removeMine(userId: string, id: string): Promise<{ id: string; deleted: true }> {
+    const result = await this.prisma.communityDesign.deleteMany({ where: { id, creatorId: userId } });
+    if (result.count !== 1) throw new NotFoundException('Community design not found.');
+    return { id, deleted: true };
+  }
+
   async publish(userId: string, invitationId: string, dto: PublishCommunityDesignDto) {
     const invitation = await this.prisma.invitation.findFirst({
       where: { id: invitationId, event: { userId } },
@@ -112,6 +127,12 @@ export class CommunityService {
         },
         select: communitySelect,
       });
+      try {
+        await notifyAdmins(this.prisma, 'COMMUNITY_PUBLISHED', 'Community design published',
+          `A creator published “${row.title}” to the community.`);
+      } catch {
+        // Publication succeeded; notification delivery is best effort.
+      }
       return this.toResponse(row);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

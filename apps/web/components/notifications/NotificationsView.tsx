@@ -7,6 +7,7 @@ export type NotificationsState =
   | { status: 'ready'; items: NotificationRecord[]; nextCursor: string | null };
 
 type Props = {
+  admin?: boolean;
   state: NotificationsState;
   saving: 'none' | 'one' | 'all';
   savingId: string | null;
@@ -25,6 +26,7 @@ const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2';
 
 export function NotificationsView({
+  admin = false,
   state,
   saving,
   savingId,
@@ -57,7 +59,7 @@ export function NotificationsView({
             </p>
           )}
           <p className="mt-3 text-body-lg text-muted">
-            Attendance confirmations from your guests, newest first.
+            {admin ? 'Platform activity, newest first.' : 'Attendance confirmations from your guests, newest first.'}
           </p>
         </div>
         {state.status === 'ready' && items.length > 0 && (
@@ -135,8 +137,9 @@ export function NotificationsView({
           </span>
           <h2 className="mt-4 font-display text-headline-md text-ink">No notifications yet</h2>
           <p className="mt-3 max-w-md text-body-md text-muted">
-            When guests respond to a published invitation, their attendance confirmation will appear
-            here.
+            {admin
+              ? 'New registrations and community publications will appear here.'
+              : 'When guests respond to a published invitation, their attendance confirmation will appear here.'}
           </p>
         </section>
       )}

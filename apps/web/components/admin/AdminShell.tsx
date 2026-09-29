@@ -7,6 +7,7 @@ import { AuthUser, getCurrentUser, logout } from '@/lib/auth';
 import { AdminHeader } from './AdminHeader';
 import { AdminSidebar, type AdminSection } from './AdminSidebar';
 import styles from './admin.module.css';
+import { NotificationSoundWatcher } from '@/components/notifications/NotificationSoundWatcher';
 
 const AdminSessionContext = createContext<AuthUser | null>(null);
 
@@ -21,6 +22,7 @@ export function useAdminSession(): AuthUser {
  * to /admin/login; the API remains authoritative via @Roles('admin').
  */
 function sectionForPath(pathname: string): AdminSection {
+  if (pathname === '/admin/notifications') return 'notifications';
   if (pathname === '/admin/users' || pathname.startsWith('/admin/users/')) return 'users';
   if (pathname === '/admin/invitations' || pathname.startsWith('/admin/invitations/')) {
     return 'invitations';
@@ -101,10 +103,11 @@ export function AdminShell({
 
   return (
     <AdminSessionContext.Provider value={user}>
+      <NotificationSoundWatcher userId={user.id} inboxPath="/admin/notifications" />
       <div className={`min-h-screen bg-[#fbf8ff] text-[#1a1b22] ${styles.shellRoot}`}>
         <AdminSidebar user={user} section={activeSection} onLogout={onLogout} />
         <div className="flex min-h-screen flex-col lg:pl-64">
-          <AdminHeader section={activeSection} />
+          <AdminHeader section={activeSection} user={user} onLogout={onLogout} />
           <main className="w-full flex-1 pt-14">{children}</main>
         </div>
       </div>

@@ -226,7 +226,7 @@ export function HeaderView({
         </nav>
 
         <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
-          <ThemeToggle className="hidden lg:inline-flex" />
+          {authStatus !== 'authenticated' && <ThemeToggle className="hidden lg:inline-flex" />}
           <HeaderActions
             t={t}
             authStatus={authStatus}
@@ -274,17 +274,17 @@ export function HeaderView({
                 <p className="mt-0.5 text-body-sm text-muted">{t.nav.menuDescription}</p>
               </div>
               <div className="flex items-center gap-1">
-              <ThemeToggle />
-              <button
-                type="button"
-                aria-label={t.nav.closeMenu}
-                className={`flex h-11 w-11 items-center justify-center rounded-xl text-muted transition-colors hover:bg-ink/[0.04] hover:text-ink ${focusRing}`}
-                onClick={() => onMenuChange(false)}
-              >
-                <span className="material-symbols-outlined text-[21px]" aria-hidden="true">
-                  close
-                </span>
-              </button>
+                {authStatus !== 'authenticated' && <ThemeToggle />}
+                <button
+                  type="button"
+                  aria-label={t.nav.closeMenu}
+                  className={`flex h-11 w-11 items-center justify-center rounded-xl text-muted transition-colors hover:bg-ink/[0.04] hover:text-ink ${focusRing}`}
+                  onClick={() => onMenuChange(false)}
+                >
+                  <span className="material-symbols-outlined text-[21px]" aria-hidden="true">
+                    close
+                  </span>
+                </button>
               </div>
             </div>
             <ul className="grid gap-2">
@@ -349,6 +349,10 @@ export function HeaderView({
                       </span>
                       {t.auth.goToDashboard}
                     </Link>
+                    <ThemeToggle
+                      variant="menu"
+                      className="rounded-xl border border-line bg-surface px-4"
+                    />
                     <button
                       type="button"
                       onClick={onLogout}

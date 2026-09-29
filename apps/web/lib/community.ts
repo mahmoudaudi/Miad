@@ -49,3 +49,13 @@ export const publishCommunityDesign = (
     method: 'POST',
     body: JSON.stringify(input),
   });
+
+export const getMyCommunityDesignForInvitation = (invitationId: string) =>
+  authenticatedApiClient<CommunityDesignRecord | null>(
+    `/community/invitations/${encodeURIComponent(invitationId)}`
+  );
+
+export const deleteMyCommunityDesign = (id: string) =>
+  authenticatedApiClient<{ id: string; deleted: true }>(`/community/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });

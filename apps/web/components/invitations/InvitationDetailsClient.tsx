@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api-client';
 import { deleteEvent } from '@/lib/events';
 import { deleteInvitation, getInvitation, updateInvitationPublication } from '@/lib/invitations';
+import { deleteMyCommunityDesign, getMyCommunityDesignForInvitation, type CommunityDesignRecord } from '@/lib/community';
+import { DeleteConfirmationDialog } from '@/components/dashboard/DeleteConfirmationDialog';
 import { DeleteInvitationDialog } from './DeleteInvitationDialog';
 import { InvitationDetailsState, InvitationDetailsView } from './InvitationDetailsView';
 
@@ -19,13 +21,24 @@ export function InvitationDetailsClient({ invitationId }: { invitationId: string
   const [publicationError, setPublicationError] = useState<string | null>(null);
   const [publicationSuccess, setPublicationSuccess] = useState<string | null>(null);
   const [publicOrigin, setPublicOrigin] = useState('');
+  const [communityDesign, setCommunityDesign] = useState<CommunityDesignRecord | null>(null);
+  const [communityError, setCommunityError] = useState<string | null>(null);
+  const [confirmingCommunityDelete, setConfirmingCommunityDelete] = useState(false);
+  const [deletingCommunity, setDeletingCommunity] = useState(false);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
     setPublicationError(null);
     setPublicationSuccess(null);
+    setCommunityError(null);
     try {
-      setState({ status: 'ready', invitation: await getInvitation(invitationId) });
+      const invitation = await getInvitation(invitationId);
+      setState({ status: 'ready', invitation });
+      try {
+        setCommunityDesign(await getMyCommunityDesignForInvitation(invitationId));
+      } catch {
+        setCommunityError('Could not load community status. Try again.');
+      }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         router.replace(
@@ -101,6 +114,22 @@ export function InvitationDetailsClient({ invitationId }: { invitationId: string
     }
   }
 
+  async function removeFromCommunity() {
+    if (!communityDesign || deletingCommunity) return;
+    setDeletingCommunity(true);
+    setCommunityError(null);
+    try {
+      await deleteMyCommunityDesign(communityDesign.id);
+      setCommunityDesign(null);
+      setConfirmingCommunityDelete(false);
+      router.refresh();
+    } catch (error) {
+      setCommunityError(error instanceof ApiError ? error.message : 'Could not remove this design from the community.');
+    } finally {
+      setDeletingCommunity(false);
+    }
+  }
+
   return (
     <>
       <InvitationDetailsView
@@ -112,6 +141,9 @@ export function InvitationDetailsClient({ invitationId }: { invitationId: string
         onRetry={() => void load()}
         onDelete={() => setConfirming(true)}
         onPublicationChange={(published) => void setPublication(published)}
+        communityDesign={communityDesign}
+        communityError={communityError}
+        onRemoveFromCommunity={() => setConfirmingCommunityDelete(true)}
 
       />
       {confirming && state.status === 'ready' && (
@@ -126,6 +158,18 @@ export function InvitationDetailsClient({ invitationId }: { invitationId: string
             }
           }}
           onConfirm={() => void remove()}
+        />
+      )}
+      {confirmingCommunityDelete && communityDesign && (
+        <DeleteConfirmationDialog
+          title="Remove from Community?"
+          description={`“${communityDesign.title}” will be deleted from the Community showcase. Your original invitation and its public link will not be affected.`}
+          confirmLabel="Remove from Community"
+          busyLabel="Removing…"
+          busy={deletingCommunity}
+          error={communityError}
+          onCancel={() => { if (!deletingCommunity) setConfirmingCommunityDelete(false); }}
+          onConfirm={() => void removeFromCommunity()}
         />
       )}
     </>

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthPayload, CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -23,6 +23,12 @@ export class CommunityController {
     return this.community.listMine(user.sub);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('invitations/:invitationId')
+  findMineForInvitation(@CurrentUser() user: AuthPayload, @Param('invitationId', new ParseUUIDPipe()) invitationId: string) {
+    return this.community.findMineForInvitation(user.sub, invitationId);
+  }
+
   @Get(':slug')
   @Throttle({ default: { limit: 60, ttl: 60000 } })
   findPublic(@Param('slug') slug: string) {
@@ -45,6 +51,12 @@ export class CommunityController {
   @Patch(':id/publication')
   updatePublication(@CurrentUser() user: AuthPayload, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: UpdateCommunityPublicationDto) {
     return this.community.updatePublication(user.sub, id, dto.published);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete(':id')
+  removeMine(@CurrentUser() user: AuthPayload, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.community.removeMine(user.sub, id);
   }
 
   @UseGuards(JwtAuthGuard)

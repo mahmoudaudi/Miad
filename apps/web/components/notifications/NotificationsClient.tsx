@@ -8,13 +8,14 @@ import {
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  notifyNotificationChange,
   NotificationRecord,
 } from '@/lib/notifications';
 import { NotificationsState, NotificationsView } from './NotificationsView';
 
 type PendingAction = { kind: 'one'; id: string } | { kind: 'all' };
 
-export function NotificationsClient() {
+export function NotificationsClient({ admin = false }: { admin?: boolean }) {
   const router = useRouter();
   const loaded = useRef(false);
   const pendingRef = useRef<PendingAction | null>(null);
@@ -26,11 +27,11 @@ export function NotificationsClient() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
-  const path = '/dashboard/notifications';
+  const path = admin ? '/admin/notifications' : '/dashboard/notifications';
 
   const redirectToLogin = useCallback(() => {
-    router.replace(`/login?next=${encodeURIComponent(path)}`);
-  }, [path, router]);
+    router.replace(admin ? '/admin/login' : `/login?next=${encodeURIComponent(path)}`);
+  }, [admin, path, router]);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -74,6 +75,7 @@ export function NotificationsClient() {
               : current
           );
           setSuccessMessage('Marked as read.');
+          notifyNotificationChange();
         } else {
           const result = await markAllNotificationsRead();
           setState((current) =>
@@ -92,6 +94,7 @@ export function NotificationsClient() {
               ? 'Marked 1 notification as read.'
               : `Marked ${result.updated} notifications as read.`
           );
+          notifyNotificationChange();
         }
         pendingRef.current = null;
       } catch (error) {
@@ -165,6 +168,7 @@ export function NotificationsClient() {
 
   return (
     <NotificationsView
+      admin={admin}
       state={state}
       saving={saving}
       savingId={savingId}

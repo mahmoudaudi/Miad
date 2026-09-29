@@ -17,6 +17,11 @@ again, instantly invalidating the current pair. RBAC uses the current database
 role through `JwtAuthGuard` + `RolesGuard`. Seed roles first with
 `npm run db:seed`.
 
+For a fresh installation with no admin user, run `npm run admin:bootstrap` from
+the repository root. It creates one admin account and writes its randomly
+generated login details to the Git-ignored `.env.admin.local` file with
+owner-only permissions. It refuses to run again once an admin exists.
+
 ## Scripts
 
 - `npm run start:dev --workspace=@app/api` — dev server on :3001

@@ -5,6 +5,7 @@ import React from 'react';
 import { formatEventDate } from '@/lib/events';
 import { aiStudioProjectHref } from '@/lib/ai-studio';
 import type { InvitationRecord } from '@/lib/invitations';
+import type { CommunityDesignRecord } from '@/lib/community';
 
 export type InvitationDetailsState =
   | { status: 'loading' }
@@ -21,6 +22,9 @@ type Props = {
   onRetry: () => void;
   onDelete: () => void;
   onPublicationChange: (published: boolean) => void;
+  communityDesign?: CommunityDesignRecord | null;
+  communityError?: string | null;
+  onRemoveFromCommunity?: () => void;
   onCopyPublicUrl?: (url: string) => void;
   onSharePublicUrl?: (url: string) => void;
 };
@@ -36,6 +40,9 @@ export function InvitationDetailsView({
   onRetry,
   onDelete,
   onPublicationChange,
+  communityDesign = null,
+  communityError = null,
+  onRemoveFromCommunity,
 }: Props) {
   if (state.status === 'loading')
     return (
@@ -139,6 +146,15 @@ export function InvitationDetailsView({
             >
               Community
             </Link>
+            {communityDesign && onRemoveFromCommunity && (
+              <button
+                type="button"
+                onClick={onRemoveFromCommunity}
+                className={`rounded-xl border border-error/30 px-4 py-3 text-label-md text-error hover:bg-error/5 sm:px-5 ${focusRing}`}
+              >
+                Remove from Community
+              </button>
+            )}
             <Link
               href={aiStudioProjectHref(invitation.id)}
               className={`rounded-xl bg-primary px-4 py-3 text-center text-label-md text-white sm:px-5 ${focusRing}`}
@@ -167,6 +183,7 @@ export function InvitationDetailsView({
               )}
             </div>
           )}
+          {communityError && <p role="alert" className="mt-4 text-body-sm text-error">{communityError}</p>}
         </header>
         <dl className="grid gap-6 p-6 sm:grid-cols-2 sm:p-9">
           <div>

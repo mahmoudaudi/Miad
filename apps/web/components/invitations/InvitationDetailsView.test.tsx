@@ -17,6 +17,24 @@ const invitation = {
 };
 
 describe('InvitationDetailsView project reopening', () => {
+  it('shows a separate community removal action only for an existing listing', () => {
+    const html = renderToStaticMarkup(
+      <InvitationDetailsView
+        state={{ status: 'ready', invitation: { ...invitation, status: 'PUBLISHED', publishedAt: '2026-09-02T00:00:00.000Z' } }}
+        publishing={false}
+        publicationError={null}
+        publicationSuccess={null}
+        onRetry={() => undefined}
+        onDelete={() => undefined}
+        onPublicationChange={() => undefined}
+        onRemoveFromCommunity={() => undefined}
+        communityDesign={{ id: 'community-1', slug: 'garden-dinner', title: 'Garden Dinner', description: '', category: 'Dinner', specification: {}, creator: { name: 'Maya' }, engagement: { views: 0, likes: 0, saves: 0 }, isPublished: true, createdAt: '2026-09-01T00:00:00.000Z' }}
+      />
+    );
+    expect(html).toContain('Remove from Community');
+    expect(html).toContain('Unpublish');
+  });
+
   it('opens the persistent invitation in AI Studio using its project identity', () => {
     const html = renderToStaticMarkup(
       <InvitationDetailsView

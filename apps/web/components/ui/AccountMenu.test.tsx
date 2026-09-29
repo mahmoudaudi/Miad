@@ -46,7 +46,7 @@ describe('AccountMenu chevron', () => {
     expect(html).toContain('data-open="false"');
     expect(html).toContain('aria-expanded="false"');
     // The chevron keeps its place in the trigger; nothing else moved.
-    expect(html).toContain('material-symbols-outlined shrink-0 text-[14px] text-[#a1a1aa]');
+    expect(html).toContain('material-symbols-outlined shrink-0 text-[14px] text-muted');
   });
 
   it('hides the chevron entirely in compact mode, with no leftover node', () => {

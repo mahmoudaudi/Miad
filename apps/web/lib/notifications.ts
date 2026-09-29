@@ -19,6 +19,15 @@ export const listNotifications = (cursor?: string) =>
     `/notifications${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`
   );
 
+export const getUnreadNotificationCount = () =>
+  authenticatedApiClient<{ count: number }>('/notifications/unread-count');
+
+export const NOTIFICATIONS_CHANGED_EVENT = 'miad:notifications-changed';
+
+export function notifyNotificationChange() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
+}
+
 export const markNotificationRead = (id: string) =>
   authenticatedApiClient<NotificationRecord>(
     `/notifications/${encodeURIComponent(id)}/read`,

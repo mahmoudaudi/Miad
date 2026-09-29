@@ -17,6 +17,11 @@ export class NotificationsController {
     return this.notifications.list(user.sub, query.cursor, query.limit);
   }
 
+  @Get('unread-count')
+  unreadCount(@CurrentUser() user: AuthPayload) {
+    return this.notifications.countUnread(user.sub);
+  }
+
   @Patch('read-all')
   markAllRead(@CurrentUser() user: AuthPayload, @Body() _body: NotificationActionBodyDto) {
     return this.notifications.markAllRead(user.sub);

@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 /**
  * Admin route-group shell. Intentionally separate from the user
  * DashboardShell: own fonts (Plus Jakarta Sans + JetBrains Mono) and own
- * theme, scoped through a CSS Module so the user app is untouched.
+ * typography and application shell, scoped so the user app is untouched.
  */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -28,11 +28,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap"
         rel="stylesheet"
       />
-      <link
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
-        rel="stylesheet"
-      />
-      <div className={`min-h-screen bg-white text-zinc-900 ${styles.root}`}>{children}</div>
+      <div className={`miad-admin-theme min-h-screen bg-white text-zinc-900 ${styles.root}`}>
+        {children}
+      </div>
     </>
   );
 }

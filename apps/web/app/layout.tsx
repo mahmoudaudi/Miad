@@ -19,8 +19,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" dir="ltr" suppressHydrationWarning>
       <head>
-        {/* Resolve the saved theme before first paint so the landing page never
-            flashes light before hydration. Mirrors the ThemeToggle logic. */}
+        {/* Resolve the saved theme before first paint so no route flashes the
+            wrong palette before hydration. Mirrors the ThemeToggle logic. */}
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var k='miad-theme';var s=localStorage.getItem(k);var d=s?s==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d);}catch(e){}})();`,

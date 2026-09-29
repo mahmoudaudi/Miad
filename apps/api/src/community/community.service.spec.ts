@@ -22,6 +22,31 @@ const row = {
 };
 
 describe('CommunityService', () => {
+  it('looks up a listing only for its creator and invitation', async () => {
+    let where: unknown;
+    const service = new CommunityService({
+      communityDesign: { findFirst: async (args: { where: unknown }) => { where = args.where; return row; } },
+    } as never, {} as never);
+    await expect(service.findMineForInvitation('owner-1', 'invitation-1')).resolves.toMatchObject({ id: row.id });
+    expect(where).toEqual({ invitationId: 'invitation-1', creatorId: 'owner-1' });
+  });
+
+  it('deletes only the creator-owned community row, not the invitation', async () => {
+    let where: unknown;
+    const service = new CommunityService({
+      communityDesign: { deleteMany: async (args: { where: unknown }) => { where = args.where; return { count: 1 }; } },
+    } as never, {} as never);
+    await expect(service.removeMine('owner-1', row.id)).resolves.toEqual({ id: row.id, deleted: true });
+    expect(where).toEqual({ id: row.id, creatorId: 'owner-1' });
+  });
+
+  it('does not delete another creator’s listing', async () => {
+    const service = new CommunityService({
+      communityDesign: { deleteMany: async () => ({ count: 0 }) },
+    } as never, {} as never);
+    await expect(service.removeMine('owner-1', row.id)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('protects the clone endpoint with the existing JWT authentication guard', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, CommunityController.prototype.clone)).toContain(JwtAuthGuard);
   });

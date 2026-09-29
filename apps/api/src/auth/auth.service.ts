@@ -11,6 +11,7 @@ import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { FreeCreditsService } from '../billing/free-credits.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { notifyAdmins } from '../notifications/notifications.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
 import type { ResetPasswordDto } from './dto/reset-password.dto';
@@ -114,6 +115,13 @@ export class AuthService {
     // Best effort: never blocks registration, and the ledger key makes it
     // safe to retry.
     await this.freeCredits.grantFreeCreditsSafely(user.id, role.name);
+    // Operational alerts are best effort; a notification outage must not block signup.
+    try {
+      await notifyAdmins(this.prisma, 'USER_REGISTERED', 'New user registered',
+        `${user.firstName} ${user.lastName} (${user.email}) joined Miad.`);
+    } catch {
+      // The account is already created; the next activity can still notify admins.
+    }
     return {
       user: this.toSafeUser(user),
       tokens: this.signPair(user.id, user.email, role.name, user.tokenVersion),
@@ -270,6 +278,7 @@ export class AuthService {
     if (user && !user.isActive) {
       throw new UnauthorizedException('Google sign-in could not be completed.');
     }
+    const isNewUser = !user;
     if (!user) {
       const role = await this.prisma.role.findUnique({ where: { name: 'user' } });
       if (!role) throw new ConflictException('Default role is not seeded.');
@@ -282,6 +291,14 @@ export class AuthService {
     }
     // Same welcome grant for accounts created through Google sign-in.
     await this.freeCredits.grantFreeCreditsSafely(user.id, user.role.name);
+    if (isNewUser) {
+      try {
+        await notifyAdmins(this.prisma, 'USER_REGISTERED', 'New user registered',
+          `${user.firstName} ${user.lastName} (${user.email}) joined Miad.`);
+      } catch {
+        // A notification outage must not prevent the new account from signing in.
+      }
+    }
     return { user: this.toSafeUser(user), tokens: this.signPair(user.id, user.email, user.role.name, user.tokenVersion) };
   }
 

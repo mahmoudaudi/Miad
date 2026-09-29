@@ -2,16 +2,14 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import {
-  AiStudioWorkspaceChrome,
-  type StudioProfile,
-} from '@/components/invitations/AiStudioView';
+import { AiStudioWorkspaceChrome, type StudioProfile } from '@/components/invitations/AiStudioView';
 import { useToast } from '@/components/ui/ToastProvider';
 import { AuthUser, getCurrentUser, logout } from '@/lib/auth';
 import { ADMIN_HOME_PATH, isAdminRole } from '@/lib/admin-auth';
 import { AUTH_SUCCESS_MESSAGES, withAuthFeedback } from '@/lib/auth-feedback';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLocale } from '@/lib/i18n/LocaleProvider';
+import { NotificationSoundWatcher } from '@/components/notifications/NotificationSoundWatcher';
 
 const SessionContext = createContext<AuthUser | null>(null);
 const WorkspaceActionsContext = createContext<{
@@ -24,9 +22,7 @@ export function isAiStudioPath(pathname: string | null): boolean {
 }
 
 export type DashboardGuardDecision =
-  | { type: 'allow' }
-  | { type: 'deny-login' }
-  | { type: 'deny-admin' };
+  { type: 'allow' } | { type: 'deny-login' } | { type: 'deny-admin' };
 
 /**
  * Pure routing decision for the dashboard guard. Admins are denied the
@@ -69,7 +65,7 @@ function StudioLoading({ label, aiStudio }: { label: string; aiStudio: boolean }
     <main
       aria-busy="true"
       aria-live="polite"
-      className="min-h-[100dvh] bg-[#f1f3f5] lg:h-[100dvh] lg:overflow-hidden"
+      className="miad-studio-theme min-h-[100dvh] bg-[#f1f3f5] lg:h-[100dvh] lg:overflow-hidden"
     >
       <span className="sr-only">{label}</span>
       <div
@@ -174,9 +170,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }
   if (error || !user) {
     return (
-      <div
-        className="miad-studio-theme flex min-h-screen items-center justify-center bg-[#f1f3f5] px-4"
-      >
+      <div className="miad-studio-theme flex min-h-screen items-center justify-center bg-[#f1f3f5] px-4">
         <section className="w-full max-w-lg rounded-2xl border border-line bg-surface p-8 text-center shadow-subtle">
           <h1 className="font-display text-headline-md text-ink">
             {t.dashboard.workspaceUnavailable}
@@ -198,6 +192,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <SessionContext.Provider value={user}>
+      <NotificationSoundWatcher userId={user.id} inboxPath="/dashboard/notifications" />
       <WorkspaceActionsContext.Provider value={{ loggingOut, onLogout: () => void handleLogout() }}>
         {isAiStudio ? (
           children

@@ -11,7 +11,6 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-
     "dev": "npm run dev --workspaces --if-present",
     "dev:web": "npm run dev --workspace=apps/web",
     "dev:api": "npm run start:dev --workspace=apps/api",
@@ -27,7 +26,8 @@
     "prisma:generate": "prisma generate --schema=./prisma/schema.prisma",
     "prisma:studio": "prisma studio --schema=./prisma/schema.prisma",
     "prisma:validate": "prisma validate --schema=./prisma/schema.prisma",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "admin:bootstrap": "ts-node --project apps/api/tsconfig.json apps/api/scripts/bootstrap-admin.ts"
   },
   "devDependencies": {
     "prettier": "^3.3.3",

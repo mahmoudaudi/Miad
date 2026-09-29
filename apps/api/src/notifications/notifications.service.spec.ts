@@ -3,6 +3,7 @@ import {
   composeRsvpNotification,
   NotificationsService,
   RSVP_NOTIFICATION_TYPE,
+  notifyAdmins,
 } from './notifications.service';
 
 const now = new Date('2026-09-23T12:00:00.000Z');
@@ -56,6 +57,32 @@ describe('composeRsvpNotification', () => {
 });
 
 describe('NotificationsService', () => {
+  it('counts only the signed-in recipient’s unread notifications', async () => {
+    let where: unknown;
+    const service = new NotificationsService(prismaWith({
+      notification: { count: async (args: { where: unknown }) => { where = args.where; return 3; } },
+    }));
+    await expect(service.countUnread('owner-1')).resolves.toEqual({ count: 3 });
+    expect(where).toEqual({ userId: 'owner-1', isRead: false });
+  });
+
+  it('sends platform notifications only to active administrators', async () => {
+    let recipientFilter: unknown;
+    let created: unknown;
+    await notifyAdmins(prismaWith({
+      user: { findMany: async (args: { where: unknown }) => {
+        recipientFilter = args.where;
+        return [{ id: 'admin-1' }, { id: 'admin-2' }];
+      } },
+      notification: { createMany: async (args: { data: unknown }) => { created = args.data; } },
+    }), 'USER_REGISTERED', 'New user registered', 'A new user joined.');
+    expect(recipientFilter).toEqual({ isActive: true, role: { name: 'admin' } });
+    expect(created).toEqual([
+      { userId: 'admin-1', type: 'USER_REGISTERED', title: 'New user registered', message: 'A new user joined.', isRead: false },
+      { userId: 'admin-2', type: 'USER_REGISTERED', title: 'New user registered', message: 'A new user joined.', isRead: false },
+    ]);
+  });
+
   it('composes and persists the RSVP notification through the active transaction', async () => {
     let created: Record<string, unknown> | undefined;
     const service = new NotificationsService(prismaWith({}));

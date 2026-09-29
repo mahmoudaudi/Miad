@@ -8,6 +8,23 @@ import {
 
 export const RSVP_NOTIFICATION_TYPE = 'RSVP_RECEIVED';
 
+/** Fan out platform activity to active administrators without exposing it to users. */
+export async function notifyAdmins(
+  prisma: PrismaService,
+  type: string,
+  title: string,
+  message: string
+): Promise<void> {
+  const admins = await prisma.user.findMany({
+    where: { isActive: true, role: { name: 'admin' } },
+    select: { id: true },
+  });
+  if (!admins.length) return;
+  await prisma.notification.createMany({
+    data: admins.map(({ id }) => ({ userId: id, type, title, message, isRead: false })),
+  });
+}
+
 const notificationSelect = {
   id: true,
   type: true,
@@ -75,6 +92,11 @@ export function composeRsvpNotification(input: RsvpNotificationInput): {
 @Injectable()
 export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  countUnread(userId: string): Promise<{ count: number }> {
+    return this.prisma.notification.count({ where: { userId, isRead: false } })
+      .then((count) => ({ count }));
+  }
 
   /**
    * Creates the owner notification inside the caller's active RSVP transaction

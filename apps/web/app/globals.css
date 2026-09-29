@@ -193,6 +193,11 @@ textarea {
   animation: toast-enter 200ms var(--motion-ease, ease-out) both;
 }
 
+.dark .miad-toast {
+  border-color: rgb(var(--border));
+  background: rgb(var(--surface) / 0.97);
+}
+
 .miad-toast--success .miad-toast__icon {
   color: #287a52;
 }
@@ -328,18 +333,11 @@ textarea {
   --nav-glass-border: 255 255 255;
 }
 
-/*
- * Dark theme for the landing experience only. It is deliberately scoped to
- * `.miad-landing` so the dashboard, admin, and auth surfaces keep their own
- * palettes, and is activated by the `dark` class the theme toggle sets on
- * <html>. Contrast is kept at or above the light-theme ratios:
- * ink/muted on background, and white on the primary button.
- */
-.dark {
+/* The saved theme is applied to <html>, so every product route inherits the
+ * same semantic palette before React hydrates. Invitation artwork with its
+ * own authored colors remains independent of these application tokens. */
+:root.dark {
   color-scheme: dark;
-}
-
-.dark .miad-landing {
   --background: 14 15 18;
   --foreground: 236 237 240;
   --primary: 244 138 160;
@@ -386,6 +384,14 @@ textarea {
 .miad-landing .miad-characters *,
 .miad-landing [data-shooting-star] {
   transition-property: none;
+}
+
+/* Shared application shells also cross-fade when the global theme changes. */
+.miad-studio-theme,
+.miad-admin-theme {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: var(--motion-normal);
+  transition-timing-function: var(--motion-ease);
 }
 
 @font-face {
@@ -763,6 +769,24 @@ textarea {
   color-scheme: light;
 }
 
+.dark .miad-studio-theme {
+  --background: 16 18 22;
+  --foreground: 232 234 238;
+  --primary: 159 18 57;
+  --primary-hover: 136 19 55;
+  --on-primary: 255 255 255;
+  --secondary: 47 31 38;
+  --border: 55 59 67;
+  --surface: 25 27 32;
+  --surface-muted: 32 35 41;
+  --ink: 232 234 238;
+  --muted: 164 169 178;
+  --accent: 244 138 160;
+  background-color: rgb(var(--background));
+  color: rgb(var(--foreground));
+  color-scheme: dark;
+}
+
 .miad-studio-theme .font-display {
   font-family: Inter, system-ui, sans-serif;
 }
@@ -797,6 +821,218 @@ textarea {
 
 .miad-studio-theme .border-line {
   border-color: #d7dbe0;
+}
+
+.dark .miad-studio-theme .text-ink {
+  color: rgb(var(--ink));
+}
+.dark .miad-studio-theme .text-muted {
+  color: rgb(var(--muted));
+}
+.dark .miad-studio-theme .text-accent {
+  color: rgb(var(--accent));
+}
+.dark .miad-studio-theme .bg-accent {
+  background-color: rgb(var(--primary));
+}
+.dark .miad-studio-theme .bg-ink {
+  background-color: rgb(var(--ink));
+}
+.dark .miad-studio-theme .border-accent {
+  border-color: rgb(var(--accent));
+}
+.dark .miad-studio-theme .border-line {
+  border-color: rgb(var(--border));
+}
+.dark .miad-studio-theme .hover\:bg-primary-hover:hover {
+  background-color: rgb(var(--primary-hover));
+}
+.dark .miad-studio-theme .miad-brand-logo,
+.dark .miad-admin-theme .miad-brand-logo {
+  filter: brightness(0) invert(1);
+}
+
+/* The workspace predates semantic tokens in a few dense editor surfaces.
+ * These exact utility mappings preserve their hierarchy in dark mode while
+ * leaving generated invitation previews and authored artwork untouched. */
+.dark
+  .miad-studio-theme
+  :is(
+    [class~='bg-white'],
+    [class~='bg-white/90'],
+    [class~='bg-white/95'],
+    [class~='bg-[#fbfbfb]'],
+    [class~='bg-[#f8fafc]']
+  ) {
+  background-color: rgb(var(--surface)) !important;
+}
+.dark
+  .miad-studio-theme
+  :is([class~='bg-[#f1f3f5]'], [class~='bg-[#e5e7eb]'], [class~='bg-[#edf0f3]/80']) {
+  background-color: rgb(var(--background)) !important;
+}
+.dark
+  .miad-studio-theme
+  :is(
+    [class~='bg-[#f4f4f5]'],
+    [class~='bg-[#e2e8f0]'],
+    [class~='bg-[#d1d5db]'],
+    [class~='bg-[#cbd5e1]'],
+    [class~='bg-[#f3f4f6]']
+  ) {
+  background-color: rgb(var(--surface-muted)) !important;
+}
+.dark
+  .miad-studio-theme
+  :is(
+    [class~='text-[#18181b]'],
+    [class~='text-[#20242a]'],
+    [class~='text-[#27272a]'],
+    [class~='text-[#343a42]'],
+    [class~='text-[#3f3f46]'],
+    [class~='text-[#272b31]']
+  ) {
+  color: rgb(var(--ink)) !important;
+}
+.dark
+  .miad-studio-theme
+  :is(
+    [class~='text-[#4b5563]'],
+    [class~='text-[#52525b]'],
+    [class~='text-[#59616b]'],
+    [class~='text-[#5f6670]'],
+    [class~='text-[#6b7280]'],
+    [class~='text-[#71717a]'],
+    [class~='text-[#a1a1aa]']
+  ) {
+  color: rgb(var(--muted)) !important;
+}
+.dark .miad-studio-theme :is([class~='text-[#9f1239]'], [class~='text-[#c2410c]']) {
+  color: rgb(var(--accent)) !important;
+}
+.dark
+  .miad-studio-theme
+  :is(
+    [class~='border-[#cbd5e1]'],
+    [class~='border-[#cfd4da]'],
+    [class~='border-[#d1d5db]'],
+    [class~='border-[#d7dbe0]'],
+    [class~='border-[#dbe1e8]'],
+    [class~='border-[#e4e4e7]'],
+    [class~='border-[#e5e7eb]'],
+    [class~='border-[#ececee]']
+  ) {
+  border-color: rgb(var(--border)) !important;
+}
+.dark .miad-studio-theme [class~='hover:bg-[#f4f4f5]']:hover,
+.dark .miad-studio-theme [class~='hover:bg-[#e5e7eb]']:hover,
+.dark .miad-studio-theme [class~='hover:bg-[#e9edf2]']:hover,
+.dark .miad-studio-theme [class~='hover:bg-[#fafafa]']:hover,
+.dark .miad-studio-theme [class~='hover:bg-white']:hover {
+  background-color: rgb(var(--surface-muted)) !important;
+}
+.dark .miad-studio-theme [class~='bg-[#fff1f2]'],
+.dark .miad-studio-theme [class~='bg-[#ffe4e6]'] {
+  background-color: rgb(var(--secondary)) !important;
+}
+.dark .miad-studio-theme [class~='hover:bg-[#881337]']:hover {
+  background-color: rgb(var(--primary-hover)) !important;
+}
+.dark .miad-studio-glow {
+  background:
+    radial-gradient(ellipse 90% 45% at 50% 102%, rgb(var(--primary) / 0.12), transparent 80%),
+    rgb(var(--background));
+}
+
+/* Admin pages use a separate visual system and many literal utility colors.
+ * Scope their dark equivalents to the admin route wrapper. Status/accent
+ * colors intentionally remain intact. */
+.dark .miad-admin-theme {
+  background-color: rgb(var(--background));
+  color: rgb(var(--ink));
+  color-scheme: dark;
+}
+.dark
+  .miad-admin-theme
+  :is(
+    [class~='bg-white'],
+    [class~='bg-white/90'],
+    [class~='sm:bg-white'],
+    [class~='bg-[#faf8f7]'],
+    [class~='bg-[#fbf8ff]']
+  ) {
+  background-color: rgb(var(--surface)) !important;
+}
+.dark
+  .miad-admin-theme
+  :is(
+    [class~='bg-[#f4f2fd]'],
+    [class~='bg-[#eeedf7]'],
+    [class~='bg-[#e8e7f1]'],
+    [class~='bg-[#f4f4f5]'],
+    [class~='bg-zinc-200/70']
+  ) {
+  background-color: rgb(var(--surface-muted)) !important;
+}
+.dark .miad-admin-theme [class*='bg-[#f4f2fd]/'],
+.dark .miad-admin-theme [class*='bg-[#e8e7f1]/'] {
+  background-color: rgb(var(--surface-muted)) !important;
+}
+.dark .miad-admin-theme [class~='bg-[#ffdad6]'],
+.dark .miad-admin-theme [class*='bg-[#ffdad6]/'] {
+  background-color: rgb(76 38 43) !important;
+}
+.dark .miad-admin-theme [class~='bg-[#e1e0ff]'],
+.dark .miad-admin-theme [class*='bg-[#e1e0ff]/'] {
+  background-color: rgb(46 45 76) !important;
+}
+.dark
+  .miad-admin-theme
+  :is([class~='text-[#1a1b22]'], [class~='text-zinc-900'], [class~='text-zinc-700']) {
+  color: rgb(var(--ink)) !important;
+}
+.dark
+  .miad-admin-theme
+  :is(
+    [class~='text-[#47464b]'],
+    [class~='text-zinc-400'],
+    [class~='text-zinc-500'],
+    [class~='text-zinc-600']
+  ) {
+  color: rgb(var(--muted)) !important;
+}
+.dark .miad-admin-theme [class*='text-[#47464b]/'] {
+  color: rgb(var(--muted)) !important;
+}
+.dark .miad-admin-theme [class~='text-[#c8c5cb]'] {
+  color: rgb(var(--muted)) !important;
+}
+.dark .miad-admin-theme [class~='text-[#7d1128]'],
+.dark .miad-admin-theme [class~='text-[#8e1631]'],
+.dark .miad-admin-theme [class~='text-[#93000a]'],
+.dark .miad-admin-theme [class~='text-[#ba1a1a]'] {
+  color: rgb(255 151 165) !important;
+}
+.dark .miad-admin-theme [class~='text-[#005236]'] {
+  color: rgb(139 224 179) !important;
+}
+.dark .miad-admin-theme [class~='text-[#4648d4]'],
+.dark .miad-admin-theme [class~='text-[#07006c]'] {
+  color: rgb(181 182 255) !important;
+}
+.dark
+  .miad-admin-theme
+  :is(
+    [class~='border-[#c8c5cb]'],
+    [class~='border-[#e3e1ec]'],
+    [class~='border-[#e8e7f1]'],
+    [class~='border-zinc-200']
+  ) {
+  border-color: rgb(var(--border)) !important;
+}
+.dark .miad-admin-theme [class~='hover:bg-[#f4f2fd]']:hover,
+.dark .miad-admin-theme [class~='hover:bg-[#e8e7f1]']:hover {
+  background-color: rgb(var(--surface-muted)) !important;
 }
 
 /* Decorative prompt caret; hidden from assistive technology by the markup. */
@@ -835,13 +1071,13 @@ textarea {
 
 .miad-sidebar-scroll {
   scrollbar-width: thin;
-  scrollbar-color: #e2e8f0 transparent;
+  scrollbar-color: rgb(var(--border)) transparent;
 }
 .miad-sidebar-scroll::-webkit-scrollbar {
   width: 4px;
 }
 .miad-sidebar-scroll::-webkit-scrollbar-thumb {
-  background: #e2e8f0;
+  background: rgb(var(--border));
   border-radius: 9999px;
 }
 
@@ -858,7 +1094,7 @@ textarea {
   border-radius: 0.375rem;
 }
 .miad-account-menu .miad-menu-item:hover {
-  background: #fafafa;
+  background: rgb(var(--surface-muted));
 }
 
 @media (prefers-reduced-motion: reduce) {

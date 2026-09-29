@@ -2,17 +2,11 @@ import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import type { AuthUser } from '@/lib/auth';
-import { initialsOf } from '@/lib/admin';
+import { AdminAccountMenu } from './AdminAccountMenu';
 import styles from './admin.module.css';
 
 export type AdminSection =
-  | 'overview'
-  | 'users'
-  | 'invitations'
-  | 'community'
-  | 'ai-engine'
-  | 'billing'
-  | 'analytics';
+  'overview' | 'users' | 'invitations' | 'community' | 'ai-engine' | 'billing' | 'analytics' | 'notifications';
 
 type NavItem = {
   section: AdminSection;
@@ -24,6 +18,7 @@ type NavItem = {
 /** Only shipped sections are listed — new pages add their nav item on arrival. */
 const CORE_NAV: NavItem[] = [
   { section: 'overview', label: 'Overview', icon: 'dashboard', href: '/admin' },
+  { section: 'notifications', label: 'Notifications', icon: 'notifications', href: '/admin/notifications' },
   { section: 'users', label: 'Users', icon: 'group', href: '/admin/users' },
   {
     section: 'invitations',
@@ -97,7 +92,6 @@ export function AdminSidebar({
   section: AdminSection;
   onLogout: () => void;
 }) {
-  const name = `${user.firstName} ${user.lastName}`.trim() || user.email;
   return (
     <aside className="fixed left-0 top-0 z-50 hidden h-screen w-64 select-none flex-col border-r border-[#e3e1ec] bg-white shadow-sm lg:flex">
       <div className="flex shrink-0 items-center justify-between border-b border-[#e3e1ec] px-3 pb-3 pt-4">
@@ -107,7 +101,7 @@ export function AdminSidebar({
             src="/miad-logo.png"
             width={120}
             height={80}
-            className="h-8 w-auto object-contain"
+            className="miad-brand-logo h-8 w-auto object-contain"
           />
         </div>
         <span
@@ -125,32 +119,7 @@ export function AdminSidebar({
       </div>
 
       <div className="shrink-0 border-t border-[#e3e1ec] bg-white p-2">
-        <div className="flex items-center justify-between rounded-lg p-1.5 transition-colors hover:bg-[#f4f2fd]">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span
-              aria-hidden="true"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#eeedf7] text-[11px] font-semibold text-[#1a1b22] ring-1 ring-[#c8c5cb]"
-            >
-              {initialsOf(name)}
-            </span>
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate text-[13px] font-medium leading-tight text-[#1a1b22]">
-                {name}
-              </span>
-              <span className="truncate text-[11px] text-[#47464b]">Admin</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onLogout}
-            title="Sign out"
-            className="rounded-md p-1.5 text-[#47464b] transition-colors hover:bg-[#e8e7f1] hover:text-[#1a1b22]"
-          >
-            <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-              logout
-            </span>
-          </button>
-        </div>
+        <AdminAccountMenu user={user} onLogout={onLogout} />
       </div>
     </aside>
   );

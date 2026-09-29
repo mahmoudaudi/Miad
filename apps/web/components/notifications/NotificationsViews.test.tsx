@@ -60,6 +60,12 @@ describe('notifications view', () => {
     expect(html).not.toContain('Mark as read');
   });
 
+  it('explains which activity fills the admin inbox', () => {
+    const html = render({ admin: true, state: { status: 'ready', items: [], nextCursor: null } });
+    expect(html).toContain('New registrations and community publications');
+    expect(html).not.toContain('When guests respond');
+  });
+
   it('renders notification rows with read/unread presentation and safe text wrapping', () => {
     const html = render();
     expect(html).toContain('New attendance confirmation from Nadia');

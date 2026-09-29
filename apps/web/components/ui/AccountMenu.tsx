@@ -4,6 +4,8 @@ import Link from 'next/link';
 import React from 'react';
 import type { AuthUser } from '@/lib/auth';
 import { Popover } from './Popover';
+import { ThemeToggle } from '@/components/landing/ThemeToggle';
+import { UnreadNotificationBadge } from '@/components/notifications/UnreadNotificationBadge';
 
 export type UserProfileInput = {
   name: string;
@@ -65,8 +67,8 @@ export function AccountMenu({
             <span
               className={`min-w-0 truncate text-start ${
                 items === 'account'
-                  ? 'text-xs font-medium text-[#27272a]'
-                  : 'flex-1 text-xs font-medium text-[#4b5563]'
+                  ? 'text-xs font-medium text-ink'
+                  : 'flex-1 text-xs font-medium text-muted'
               }`}
             >
               {name}
@@ -75,7 +77,7 @@ export function AccountMenu({
           {!compact && (
             <span
               aria-hidden="true"
-              className="miad-chevron material-symbols-outlined shrink-0 text-[14px] text-[#a1a1aa]"
+              className="miad-chevron material-symbols-outlined shrink-0 text-[14px] text-muted"
             >
               expand_less
             </span>
@@ -83,11 +85,11 @@ export function AccountMenu({
         </>
       }
     >
-      <div className="mb-1.5 border-b border-[#f4f4f5] px-3 pb-2.5 pt-2 text-start">
-        <p className="break-words text-xs font-semibold text-[#18181b]">{name}</p>
-        {email && <p className="mt-0.5 break-all text-[11px] text-[#a1a1aa]">{email}</p>}
+      <div className="mb-1.5 border-b border-line px-3 pb-2.5 pt-2 text-start">
+        <p className="break-words text-xs font-semibold text-ink">{name}</p>
+        {email && <p className="mt-0.5 break-all text-[11px] text-muted">{email}</p>}
         {items === 'workspace' && (
-          <p className="mt-1.5 text-[10px] font-medium uppercase tracking-wider text-[#9f1239]">
+          <p className="mt-1.5 text-[10px] font-medium uppercase tracking-wider text-primary">
             Personal workspace
           </p>
         )}
@@ -98,9 +100,7 @@ export function AccountMenu({
             className="miad-menu-item flex items-center gap-2 text-xs"
             href="/dashboard/invitations/new"
           >
-            <span className="material-symbols-outlined text-[16px] text-[#9f1239]">
-              auto_awesome
-            </span>
+            <span className="material-symbols-outlined text-[16px] text-primary">auto_awesome</span>
             AI Studio
           </Link>
           <Link
@@ -116,24 +116,26 @@ export function AccountMenu({
         className="miad-menu-item flex items-center gap-2 text-xs"
         href="/dashboard/notifications"
       >
-        <span className="material-symbols-outlined text-[16px] text-[#a1a1aa]">notifications</span>
+        <span className="material-symbols-outlined text-[16px] text-muted">notifications</span>
         Notifications
+        <UnreadNotificationBadge />
       </Link>
+      <ThemeToggle variant="menu" />
       {items === 'workspace' && (
         <Link className="miad-menu-item flex items-center gap-2 text-xs" href="/dashboard/billing">
           <span className="material-symbols-outlined text-[16px]">payments</span>
           Billing
         </Link>
       )}
-      <div className="my-1.5 border-t border-[#f4f4f5]" />
+      <div className="my-1.5 border-t border-line" />
       <div className="px-1.5 pb-0.5 pt-1">
         <button
-          className="miad-menu-item flex w-full items-center gap-2 rounded-lg bg-[#f4f4f5]/70 text-xs font-medium text-[#3f3f46] transition-colors hover:bg-[#e4e4e7]"
+          className="miad-menu-item flex w-full items-center gap-2 rounded-lg bg-surface-muted text-xs font-medium text-ink transition-colors hover:bg-secondary"
           type="button"
           disabled={loggingOut || !onLogout}
           onClick={onLogout}
         >
-          <span className="material-symbols-outlined text-[16px] text-[#a1a1aa]">logout</span>
+          <span className="material-symbols-outlined text-[16px] text-muted">logout</span>
           {loggingOut ? 'Logging out…' : 'Log out'}
         </button>
       </div>

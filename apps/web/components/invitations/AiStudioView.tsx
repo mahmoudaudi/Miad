@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountMenu } from '@/components/ui/AccountMenu';
+import { Meteors } from '@/components/ui/meteors';
 import { ShareButton } from '@/components/ui/ShareButton';
 import { ApiError } from '@/lib/api-client';
 import { aiStudioProjectHref } from '@/lib/ai-studio';
@@ -258,38 +259,61 @@ function useMyProjects() {
   return { state, load };
 }
 
-function MobileWorkspaceMenu({}: {}) {
+function MobileWorkspaceMenu({
+  profile,
+  loggingOut,
+  onLogout,
+}: {
+  profile?: StudioProfile;
+  loggingOut?: boolean;
+  onLogout?: () => void;
+}) {
   return (
-    <details className="group relative lg:hidden">
-      <summary
-        aria-label="Open workspace menu"
-        className={`flex size-11 cursor-pointer list-none items-center justify-center rounded-md text-[#4b5563] transition-colors hover:bg-[#e5e7eb] hover:text-[#20242a] ${focusRing}`}
-      >
-        <span className="material-symbols-outlined text-[21px]" aria-hidden="true">
-          menu
-        </span>
-      </summary>
-      <div className="absolute end-0 top-12 z-50 w-[min(19rem,calc(100vw-1rem))] rounded-lg border border-[#d1d5db] bg-white p-2 shadow-[0_16px_40px_rgba(15,23,42,0.18)]">
-        <WorkspaceNavigation />
-        <div className="my-2 border-t border-[#e5e7eb]" />
-        <Link
-          href="/dashboard/invitations/new"
-          aria-current="page"
-          className={`flex min-h-11 items-center gap-2.5 rounded-md border border-[#fecdd3] bg-[#fff1f2] px-2 text-[13px] font-semibold text-[#9f1239] ${focusRing}`}
+    <div className="flex items-center gap-1 lg:hidden">
+      {profile && (
+        <AccountMenu
+          profile={profile}
+          items="account"
+          compact
+          loggingOut={loggingOut}
+          onLogout={onLogout}
+          triggerClassName="!min-h-11 !w-11 !px-0"
+        />
+      )}
+      <details className="group relative">
+        <summary
+          aria-label="Open workspace menu"
+          className={`flex size-11 cursor-pointer list-none items-center justify-center rounded-md text-[#4b5563] transition-colors hover:bg-[#e5e7eb] hover:text-[#20242a] ${focusRing}`}
         >
-          <span className="material-symbols-outlined text-[19px]" aria-hidden="true">
-            auto_awesome
+          <span className="material-symbols-outlined text-[21px]" aria-hidden="true">
+            menu
           </span>
-          AI studio
-        </Link>
-      </div>
-    </details>
+        </summary>
+        <div className="absolute end-0 top-12 z-50 w-[min(19rem,calc(100vw-1rem))] rounded-lg border border-[#d1d5db] bg-white p-2 shadow-[0_16px_40px_rgba(15,23,42,0.18)]">
+          <WorkspaceNavigation />
+          <div className="my-2 border-t border-[#e5e7eb]" />
+          <Link
+            href="/dashboard/invitations/new"
+            aria-current="page"
+            className={`flex min-h-11 items-center gap-2.5 rounded-md border border-[#fecdd3] bg-[#fff1f2] px-2 text-[13px] font-semibold text-[#9f1239] ${focusRing}`}
+          >
+            <span className="material-symbols-outlined text-[19px]" aria-hidden="true">
+              auto_awesome
+            </span>
+            AI studio
+          </Link>
+        </div>
+      </details>
+    </div>
   );
 }
 
 export function StudioHeader({
   invitationsHref,
   detailsHref,
+  profile,
+  loggingOut,
+  onLogout,
   publishUrl = null,
   publishing = false,
   publicationPending = false,
@@ -297,6 +321,9 @@ export function StudioHeader({
 }: {
   invitationsHref: string;
   detailsHref: string | null;
+  profile?: StudioProfile;
+  loggingOut?: boolean;
+  onLogout?: () => void;
   publishUrl?: string | null;
   publishing?: boolean;
   publicationPending?: boolean;
@@ -394,7 +421,7 @@ export function StudioHeader({
             Open invitation
           </Link>
         )}
-        <MobileWorkspaceMenu />
+        <MobileWorkspaceMenu profile={profile} loggingOut={loggingOut} onLogout={onLogout} />
       </div>
     </header>
   );
@@ -457,7 +484,7 @@ export function StudioSidebar({
               width={150}
               height={100}
               priority
-              className={`shrink-0 opacity-100 transition-opacity duration-200 ease-out group-hover/logo:opacity-0 ${logoClass}`}
+              className={`miad-brand-logo shrink-0 opacity-100 transition-opacity duration-200 ease-out group-hover/logo:opacity-0 ${logoClass}`}
             />
             <button
               type="button"
@@ -540,10 +567,16 @@ export function AiStudioWorkspaceChrome({
   return (
     <main className="miad-studio-theme min-h-[100dvh] bg-[#f1f3f5] text-[#20242a]">
       {showHeader ? (
-        <StudioHeader invitationsHref="/dashboard/invitations" detailsHref={null} />
+        <StudioHeader
+          invitationsHref="/dashboard/invitations"
+          detailsHref={null}
+          profile={profile}
+          loggingOut={loggingOut}
+          onLogout={onLogout}
+        />
       ) : (
         <div className="flex h-12 items-center justify-end border-b border-[#ececee] bg-[#fbfbfb] px-3 lg:hidden">
-          <MobileWorkspaceMenu />
+          <MobileWorkspaceMenu profile={profile} loggingOut={loggingOut} onLogout={onLogout} />
         </div>
       )}
       <div
@@ -552,8 +585,9 @@ export function AiStudioWorkspaceChrome({
         }`}
       >
         <StudioSidebar profile={profile} loggingOut={loggingOut} onLogout={onLogout} />
-        <section className="min-w-0 bg-[#f1f3f5] px-3 py-4 sm:px-5 lg:px-8 lg:py-6">
-          {children}
+        <section className="relative isolate min-w-0 bg-[#f1f3f5] px-3 py-4 sm:px-5 lg:px-8 lg:py-6">
+          <Meteors number={12} />
+          <div className="relative z-10">{children}</div>
         </section>
       </div>
     </main>
@@ -629,11 +663,12 @@ function StudioLanding({
   children: React.ReactNode;
 }) {
   return (
-    <div className="miad-studio-glow flex flex-col overflow-y-auto px-5 py-7 sm:px-8 lg:px-10">
-      <div className="mx-auto w-full max-w-5xl">
+    <div className="miad-studio-glow relative isolate flex flex-col overflow-y-auto px-5 py-7 sm:px-8 lg:px-10">
+      <Meteors number={14} />
+      <div className="relative z-10 mx-auto w-full max-w-5xl">
         <RecentProjectTitles invitations={recentInvitations} loading={recentProjectsLoading} />
       </div>
-      <div className="mx-auto my-auto flex w-full max-w-2xl flex-col items-start py-10">
+      <div className="relative z-10 mx-auto my-auto flex w-full max-w-2xl flex-col items-start py-10">
         <h1 className="mb-6 text-[26px] font-bold leading-tight tracking-tight text-[#18181b] sm:text-[31px]">
           {firstName
             ? `${firstName}, what are we working on today?`
@@ -1630,8 +1665,8 @@ export function AiStudioView({
       tabIndex={-1}
       className={
         started
-          ? 'min-h-[100dvh] bg-[#f1f3f5] text-[#20242a] lg:h-[100dvh] lg:overflow-hidden'
-          : 'min-h-[100dvh] text-[#20242a] lg:h-[100dvh] lg:overflow-hidden'
+          ? 'miad-studio-theme min-h-[100dvh] bg-[#f1f3f5] text-[#20242a] lg:h-[100dvh] lg:overflow-hidden'
+          : 'miad-studio-theme min-h-[100dvh] text-[#20242a] lg:h-[100dvh] lg:overflow-hidden'
       }
     >
       <a
@@ -1645,7 +1680,7 @@ export function AiStudioView({
           {/* The new chat has nothing to publish, so the publishing bar stays hidden.
               Mobile keeps the disclosure because the sidebar is desktop-only. */}
           <div className="flex h-12 items-center justify-end border-b border-[#ececee] bg-[#fbfbfb] px-3 lg:hidden">
-            <MobileWorkspaceMenu />
+            <MobileWorkspaceMenu profile={profile} loggingOut={loggingOut} onLogout={onLogout} />
           </div>
           <div className="lg:grid lg:h-[100dvh] lg:grid-cols-[auto_minmax(0,1fr)] lg:overflow-hidden">
             {sidebar}
@@ -1667,6 +1702,9 @@ export function AiStudioView({
           <StudioHeader
             invitationsHref={invitationsHref}
             detailsHref={detailsHref}
+            profile={profile}
+            loggingOut={loggingOut}
+            onLogout={onLogout}
             publishUrl={publishUrl}
             publishing={publishing}
             publicationPending={publicationPending}
