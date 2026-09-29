@@ -90,6 +90,8 @@ const en = {
       emailTooLong: 'Email must be at most 255 characters.',
       passwordTooShort: 'Password must be at least 10 characters.',
       passwordTooLong: 'Password must be at most 128 characters.',
+      showPassword: 'Show password',
+      hidePassword: 'Hide password',
     },
   },
   hero: {

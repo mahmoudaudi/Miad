@@ -441,7 +441,7 @@ export function StudioSidebar({
     <aside
       aria-label="AI studio workspace"
       data-collapsed={narrow ? 'true' : 'false'}
-      className={`hidden min-h-0 shrink-0 flex-col overflow-hidden border-e border-[#ececee] bg-[#fbfbfb] transition-[width] duration-200 ease-out lg:flex ${widthClass}`}
+      className={`hidden lg:sticky lg:top-0 lg:h-[100dvh] min-h-0 shrink-0 flex-col overflow-hidden border-e border-[#ececee] bg-[#fbfbfb] transition-[width] duration-200 ease-out lg:flex ${widthClass}`}
     >
       <div className="miad-sidebar-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-3 pb-2 pt-3.5">
         {/* One slot, one control. The image stays in flow so it defines the row height
